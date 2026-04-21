@@ -57,37 +57,50 @@ class TransformerClassifier:
         self.model.to(self.device)
         self.model.eval()
 
-    def predict(self, texts: Sequence[str]) -> np.ndarray:
+    def _iter_batches(self, texts: Sequence[str], batch_size: int = 16):
+        text_list = list(texts)
+        for start in range(0, len(text_list), batch_size):
+            yield text_list[start : start + batch_size]
+
+    def predict(self, texts: Sequence[str], batch_size: int = 16) -> np.ndarray:
         self._lazy_load()
         import torch
 
+        predictions = []
         with torch.no_grad():
-            encoded = self.tokenizer(
-                list(texts),
-                padding=True,
-                truncation=True,
-                max_length=self.max_length,
-                return_tensors="pt",
-            )
-            encoded = {key: value.to(self.device) for key, value in encoded.items()}
-            logits = self.model(**encoded).logits
-            return torch.argmax(logits, dim=-1).cpu().numpy()
+            for batch in self._iter_batches(texts, batch_size=batch_size):
+                encoded = self.tokenizer(
+                    batch,
+                    padding=True,
+                    truncation=True,
+                    max_length=self.max_length,
+                    return_tensors="pt",
+                )
+                encoded = {key: value.to(self.device) for key, value in encoded.items()}
+                logits = self.model(**encoded).logits
+                batch_preds = torch.argmax(logits, dim=-1).cpu().numpy()
+                predictions.append(batch_preds)
+        return np.concatenate(predictions, axis=0) if predictions else np.array([], dtype=int)
 
-    def predict_proba(self, texts: Sequence[str]) -> np.ndarray:
+    def predict_proba(self, texts: Sequence[str], batch_size: int = 16) -> np.ndarray:
         self._lazy_load()
         import torch
 
+        probabilities = []
         with torch.no_grad():
-            encoded = self.tokenizer(
-                list(texts),
-                padding=True,
-                truncation=True,
-                max_length=self.max_length,
-                return_tensors="pt",
-            )
-            encoded = {key: value.to(self.device) for key, value in encoded.items()}
-            logits = self.model(**encoded).logits
-            return torch.softmax(logits, dim=-1).cpu().numpy()
+            for batch in self._iter_batches(texts, batch_size=batch_size):
+                encoded = self.tokenizer(
+                    batch,
+                    padding=True,
+                    truncation=True,
+                    max_length=self.max_length,
+                    return_tensors="pt",
+                )
+                encoded = {key: value.to(self.device) for key, value in encoded.items()}
+                logits = self.model(**encoded).logits
+                batch_probs = torch.softmax(logits, dim=-1).cpu().numpy()
+                probabilities.append(batch_probs)
+        return np.concatenate(probabilities, axis=0) if probabilities else np.empty((0, 2), dtype=float)
 
     def save(self, path: str | Path) -> None:
         self._lazy_load()

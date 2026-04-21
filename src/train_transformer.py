@@ -94,7 +94,6 @@ def main() -> None:
         model=model,
         args=training_args,
         train_dataset=tokenized_dataset,
-        tokenizer=tokenizer,
     )
 
     print(f"Training on {len(texts)} rows for {epochs} epoch(s)...")
