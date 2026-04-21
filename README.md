@@ -14,6 +14,7 @@ csce421-final-project/
 ├── models/                   # saved artifacts
 ├── outputs/                  # prediction CSVs
 ├── report/                   # report assets / notes
+├── docs/                     # project notes and reproducibility docs
 ├── src/
 │   ├── __init__.py
 │   ├── config.py
@@ -32,15 +33,15 @@ csce421-final-project/
 └── .gitignore
 ```
 
-## Actual course file shape
+## Expected data shape
 
-From your Mac copy of the assignment files:
+The scaffold assumes CSVs shaped like:
 
-- train CSV header: `row_id,text,label`
+- training CSV header: `row_id,text,label`
 - test CSV header: `row_id,text`
-- example prediction CSV header: `row_id,prediction`
+- submission CSV header: `row_id,prediction`
 
-The scaffold now matches that shape by default.
+The loader uses light column inference, but those names are the default target format.
 
 ## What is included
 
@@ -54,7 +55,8 @@ The scaffold now matches that shape by default.
 ## Setup
 
 ```bash
-cd /home/kyler/csce421-final-project
+git clone https://github.com/kyler505/421-final-project.git
+cd 421-final-project
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -62,12 +64,10 @@ pip install -r requirements.txt
 
 If you want the transformer path later, uncomment/install the optional transformer dependencies in `requirements.txt`.
 
-## Expected CSV format
+## Example CSV format
 
 ### Training CSV
 Needs at least text and label columns; `row_id` is preserved if present.
-
-Example:
 
 ```csv
 row_id,text,label
@@ -99,8 +99,8 @@ python -m src.train_baseline \
 python -m src.predict \
   --mode baseline \
   --model models/baseline_model.pkl \
-  --input data/raw/test01_text_only.csv \
-  --output outputs/test01-pred.csv
+  --input data/raw/test.csv \
+  --output outputs/test-pred.csv
 ```
 
 With optional debug CSV:
@@ -109,9 +109,9 @@ With optional debug CSV:
 python -m src.predict \
   --mode baseline \
   --model models/baseline_model.pkl \
-  --input data/raw/test01_text_only.csv \
-  --output outputs/test01-pred.csv \
-  --debug-output outputs/test01-debug.csv \
+  --input data/raw/test.csv \
+  --output outputs/test-pred.csv \
+  --debug-output outputs/test-debug.csv \
   --probabilities
 ```
 
@@ -134,20 +134,20 @@ python -m src.train_transformer \
 python -m src.predict \
   --mode transformer \
   --model models/transformer_model \
-  --input data/raw/test01_text_only.csv \
-  --output outputs/test01-pred.csv
+  --input data/raw/test.csv \
+  --output outputs/test-pred.csv
 ```
 
 ## Notes
 
 - Default transformer max length is `128`.
 - The transformer wrapper is import-safe even if `torch` / `transformers` are not installed.
-- Submission output is now the course format: `row_id,prediction`.
+- Submission output is the compact format: `row_id,prediction`.
 - Use `--debug-output` if you also want a richer local inspection CSV.
 - The transformer path is intentionally minimal; it is set up to be extended once you decide on evaluation, cross-validation, and checkpoint strategy.
 
 ## Tests
 
 ```bash
-pytest -q tests/test_smoke.py
+PYTHONPATH=. pytest -q tests/test_smoke.py
 ```
