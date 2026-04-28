@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "path": "../../data/raw/train_data-text_and_labels.csv",
+      "label_source": "gold",
+      "split": "course_labeled"
+    }
+  ]
+}

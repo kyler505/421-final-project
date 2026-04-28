@@ -40,6 +40,20 @@ data/raw/test02_text_only.csv
 data/raw/test03_text_only.csv
 ```
 
+## Multi-shard training (optional)
+
+To combine the course CSV with additional local processed shards (for example silver-labeled MIMIC exports under `data/processed/`), use a version-1 JSON manifest and pass `--train-manifest` to `train_baseline` or `train_transformer`. Schema: [data-manifest-schema.md](data-manifest-schema.md).
+
+## Reproducible CV metrics
+
+Stratified K-fold on the baseline (useful for the 20-example gold set):
+
+```bash
+python -m src.run_eval --train data/raw/train_data-text_and_labels.csv --folds 5 --output outputs/cv_baseline.json
+```
+
+Training scripts emit a `*_run_manifest.json` (baseline) or `run_manifest.json` inside the transformer output directory listing package versions and hyperparameters.
+
 ## Reproducing the current baseline
 
 Create an environment and install dependencies:
