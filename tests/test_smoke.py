@@ -110,6 +110,70 @@ def test_submission_predictions_format(tmp_path) -> None:
     assert lines == ["row_id,prediction", "0,1", "1,0"]
 
 
+def test_contracts_validate_submission_rows_ok() -> None:
+    from src.contracts import validate_submission_rows
+
+    validate_submission_rows([0, 1], [1, 0])
+
+
+def test_contracts_validate_submission_rows_bad_label() -> None:
+    from src.contracts import validate_submission_rows
+
+    with pytest.raises(ValueError):
+        validate_submission_rows([0], [2])
+
+
+def test_manifest_roundtrip(tmp_path) -> None:
+    from src.manifest import RunManifest, load_run_manifest, save_run_manifest
+
+    m = RunManifest(backend="baseline", artifact_kind="sklearn_pickle", train_path="x.csv")
+    path = tmp_path / "m.json"
+    save_run_manifest(m, path)
+    loaded = load_run_manifest(path)
+    assert loaded.backend == "baseline"
+    assert loaded.train_path == "x.csv"
+
+
+def test_load_training_manifest(tmp_path) -> None:
+    from src.data import get_texts_labels, load_training_manifest
+
+    csv_path = tmp_path / "shard.csv"
+    csv_path.write_text(
+        'row_id,text,label\n0,"hello",1\n1,"world",0\n',
+        encoding="utf-8",
+    )
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        '{"version": 1, "entries": [{"path": "shard.csv", "label_source": "gold", "split": "t"}]}',
+        encoding="utf-8",
+    )
+    df = load_training_manifest(manifest_path)
+    texts, labels = get_texts_labels(df)
+    assert len(texts) == 2
+    assert labels == [1, 0]
+    assert df["label_source"].tolist() == ["gold", "gold"]
+    assert df["split"].tolist() == ["t", "t"]
+
+
+def test_cv_baseline_stratified_runs() -> None:
+    from src.eval_cv import cv_baseline_stratified
+
+    texts = [
+        "patient has pneumonia",
+        "tolerated diet",
+        "diabetes mellitus history",
+        "walked hallway",
+        "acute kidney injury",
+        "watching television",
+        "hypertension controlled",
+        "denies chest pain",
+    ]
+    labels = [1, 0, 1, 0, 1, 0, 1, 0]
+    folds, means = cv_baseline_stratified(texts, labels, n_splits=4, random_state=0)
+    assert len(folds) == 4
+    assert "f1" in means
+
+
 def test_debug_predictions_format(tmp_path) -> None:
     from src.utils import save_debug_predictions
 

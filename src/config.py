@@ -59,6 +59,9 @@ class Config:
     test_size: float = 0.2
     random_state: int = 42
 
+    # Course handout: accept up to 128 words; tokenizer path uses max_length tokens.
+    max_words_course: int = 128
+
 
 def get_config() -> Config:
     config = Config()
@@ -66,4 +69,6 @@ def get_config() -> Config:
         config.baseline_model_path = Path(os.environ["BASELINE_MODEL_PATH"])
     if os.getenv("TRANSFORMER_MODEL_PATH"):
         config.transformer_model_path = Path(os.environ["TRANSFORMER_MODEL_PATH"])
+    if os.getenv("CSCE421_PRETRAINED_PATH"):
+        config.model_name = os.environ["CSCE421_PRETRAINED_PATH"]
     return config

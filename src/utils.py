@@ -7,6 +7,8 @@ import json
 from pathlib import Path
 from typing import Any, Sequence
 
+from src.contracts import SUBMISSION_HEADER, validate_submission_rows
+
 
 def save_submission_predictions(
     row_ids: Sequence[int],
@@ -14,12 +16,13 @@ def save_submission_predictions(
     output_path: str | Path,
 ) -> None:
     """Save predictions in the course submission format: row_id,prediction."""
+    validate_submission_rows(row_ids, predictions)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with output_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["row_id", "prediction"])
+        writer.writerow(list(SUBMISSION_HEADER))
         for row_id, pred in zip(row_ids, predictions):
             writer.writerow([int(row_id), int(pred)])
 

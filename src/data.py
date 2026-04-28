@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import pandas as pd
 
@@ -112,3 +113,40 @@ def get_texts(df: pd.DataFrame) -> list[str]:
 
 def get_row_ids(df: pd.DataFrame) -> list[int]:
     return df["row_id"].tolist()
+
+
+def load_training_manifest(path: str | Path, config: Config | None = None) -> pd.DataFrame:
+    """Load and concatenate labeled shards described by a JSON manifest.
+
+    Manifest schema: see docs/data-manifest-schema.md. Each entry must point to a
+    CSV loadable by load_train_data. Adds optional columns ``label_source`` and
+    ``split`` for provenance (gold vs silver, etc.).
+    """
+    config = config or get_config()
+    path = Path(path)
+    payload: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    version = payload.get("version", 1)
+    if version != 1:
+        raise ValueError(f"Unsupported training manifest version: {version}")
+
+    entries = payload.get("entries")
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("Manifest must contain a non-empty 'entries' list")
+
+    base = path.parent
+    frames: list[pd.DataFrame] = []
+    for idx, entry in enumerate(entries):
+        if not isinstance(entry, dict) or "path" not in entry:
+            raise ValueError(f"Manifest entries[{idx}] must be an object with 'path'")
+        rel = Path(str(entry["path"]))
+        csv_path = rel if rel.is_absolute() else (base / rel).resolve()
+        if not csv_path.exists():
+            raise FileNotFoundError(f"Manifest shard not found: {csv_path}")
+
+        df = load_train_data(csv_path, config=config)
+        df = df.copy()
+        df["label_source"] = str(entry.get("label_source", "unknown"))
+        df["split"] = str(entry.get("split", "none"))
+        frames.append(df)
+
+    return pd.concat(frames, ignore_index=True)

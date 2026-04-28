@@ -13,10 +13,10 @@ from pathlib import Path
 from statistics import mean
 
 import numpy as np
-from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from sklearn.model_selection import StratifiedKFold
 
 from src.data import load_train_data
+from src.eval_metrics import binary_classification_metrics
 
 
 def parse_args() -> argparse.Namespace:
@@ -111,13 +111,8 @@ def main() -> None:
             preds = trainer.predict(val_ds)
             pred_labels = np.argmax(preds.predictions, axis=-1)
 
-            metrics = {
-                "fold": fold_idx,
-                "accuracy": accuracy_score(val_labels, pred_labels),
-                "f1": f1_score(val_labels, pred_labels, zero_division=0),
-                "precision": precision_score(val_labels, pred_labels, zero_division=0),
-                "recall": recall_score(val_labels, pred_labels, zero_division=0),
-            }
+            metrics = binary_classification_metrics(val_labels, pred_labels)
+            metrics["fold"] = fold_idx
             print({k: round(v, 4) if isinstance(v, float) else v for k, v in metrics.items()}, flush=True)
             fold_metrics.append(metrics)
 

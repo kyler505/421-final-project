@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "created_utc": "2026-04-28T20:03:27.716966+00:00",
+  "python_version": "3.11.2",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "sklearn_version": "1.8.0",
+  "torch_version": null,
+  "transformers_version": null,
+  "backend": "baseline",
+  "artifact_kind": "sklearn_pickle",
+  "pretrained_source": "tfidf+logistic",
+  "checkpoint_dir": "C:\\Users\\erixh\\Downloads\\CSCE_421\\final_project\\421-final-project\\models\\_smoke_baseline.pkl",
+  "train_path": "C:\\Users\\erixh\\Downloads\\CSCE_421\\final_project\\421-final-project\\data\\raw\\train_data-text_and_labels.csv",
+  "max_length": null,
+  "truncation_policy": "ngram_sklearn",
+  "random_state": 42,
+  "hyperparams": {
+    "max_features": 5000,
+    "ngram_range": [
+      1,
+      2
+    ],
+    "logistic_c": 1.0
+  }
+}

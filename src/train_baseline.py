@@ -7,17 +7,26 @@ import sys
 from pathlib import Path
 
 from src.config import get_config
-from src.data import get_texts_labels, load_train_data
+from src.contracts import ARTIFACT_KIND_BASELINE
+from src.data import get_texts_labels, load_train_data, load_training_manifest
+from src.manifest import RunManifest, save_run_manifest
 from src.models.baseline import BaselineModel
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Train TF-IDF + Logistic Regression baseline")
-    parser.add_argument("--train", required=True, help="Training data CSV path")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--train", help="Single training CSV path")
+    group.add_argument("--train-manifest", dest="train_manifest", help="Training manifest JSON (multi-shard)")
     parser.add_argument("--val", default=None, help="Optional validation CSV path")
     parser.add_argument("--output", default=None, help="Output model pickle path")
     parser.add_argument("--max_features", type=int, default=None, help="Max TF-IDF features")
     parser.add_argument("--ngram_range", type=int, nargs=2, default=None, help="Example: 1 2")
+    parser.add_argument(
+        "--manifest",
+        default=None,
+        help="Optional path for run manifest JSON (default: next to model as <name>_run_manifest.json)",
+    )
     return parser.parse_args()
 
 
@@ -25,14 +34,23 @@ def main() -> None:
     args = parse_args()
     config = get_config()
 
-    train_path = Path(args.train)
-    if not train_path.exists():
-        print(f"Error: training file not found: {train_path}", file=sys.stderr)
-        sys.exit(1)
+    if args.train_manifest:
+        manifest_path = Path(args.train_manifest)
+        if not manifest_path.exists():
+            print(f"Error: manifest not found: {manifest_path}", file=sys.stderr)
+            sys.exit(1)
+        train_df = load_training_manifest(manifest_path)
+        train_source = str(manifest_path.resolve())
+    else:
+        train_path = Path(args.train)
+        if not train_path.exists():
+            print(f"Error: training file not found: {train_path}", file=sys.stderr)
+            sys.exit(1)
+        train_df = load_train_data(train_path)
+        train_source = str(train_path.resolve())
 
-    train_df = load_train_data(train_path)
     texts, labels = get_texts_labels(train_df)
-    print(f"Loaded {len(texts)} training rows from {train_path}")
+    print(f"Loaded {len(texts)} training rows from {train_source}")
 
     model = BaselineModel(
         max_features=args.max_features or config.max_features,
@@ -53,6 +71,25 @@ def main() -> None:
     output_path = Path(args.output) if args.output else config.baseline_model_path
     model.save(output_path)
     print(f"Saved baseline model to {output_path}")
+
+    manifest_out = Path(args.manifest) if args.manifest else output_path.with_name(output_path.stem + "_run_manifest.json")
+    run_manifest = RunManifest(
+        backend="baseline",
+        artifact_kind=ARTIFACT_KIND_BASELINE,
+        pretrained_source="tfidf+logistic",
+        checkpoint_dir=str(output_path.resolve()),
+        train_path=train_source,
+        max_length=None,
+        truncation_policy="ngram_sklearn",
+        random_state=config.random_state,
+        hyperparams={
+            "max_features": args.max_features or config.max_features,
+            "ngram_range": list(args.ngram_range) if args.ngram_range else list(config.ngram_range),
+            "logistic_c": config.logistic_c,
+        },
+    )
+    save_run_manifest(run_manifest, manifest_out)
+    print(f"Saved run manifest to {manifest_out}")
 
 
 if __name__ == "__main__":

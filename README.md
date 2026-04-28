@@ -19,8 +19,13 @@ csce421-final-project/
 │   ├── config.py
 │   ├── data.py
 │   ├── predict.py
+│   ├── run_eval.py
 │   ├── train_baseline.py
 │   ├── train_transformer.py
+│   ├── contracts.py
+│   ├── manifest.py
+│   ├── eval_metrics.py
+│   ├── eval_cv.py
 │   ├── utils.py
 │   └── models/
 │       ├── __init__.py
@@ -50,6 +55,15 @@ The scaffold now matches that shape by default.
 - **Prediction CLI**: writes submission CSVs in `row_id,prediction` format
 - **Optional debug CSV**: can also write `row_id,text,prediction[,probability]`
 - **Smoke tests**: basic imports, loader behavior, and baseline save/load
+- **Public contracts**: `src/contracts.py` fixes submission column names and validates binary predictions; `--mode` / `--backend` on `predict.py` are aliases
+- **Run manifests**: JSON written after training (and optional `--write-manifest` on predict) for reproducibility
+- **Evaluation**: `python -m src.run_eval` for stratified CV on the baseline; `src/eval_metrics.py` shared with `sweep_transformer`
+- **Multi-shard training**: `--train-manifest` on train scripts + schema in [docs/data-manifest-schema.md](docs/data-manifest-schema.md)
+
+## Operations and offline submission
+
+- [docs/OFFLINE_RUNBOOK.md](docs/OFFLINE_RUNBOOK.md) — environment, pinning deps, train/predict, Canvas zip
+- [docs/primary-model.md](docs/primary-model.md) — local HF checkpoint as primary artifact; `CSCE421_PRETRAINED_PATH` for defaults
 
 ## Setup
 
@@ -91,6 +105,15 @@ row_id,text
 python -m src.train_baseline \
   --train data/raw/train.csv \
   --output models/baseline_model.pkl
+```
+
+### Evaluate baseline (stratified CV on labeled CSV)
+
+```bash
+python -m src.run_eval \
+  --train data/raw/train_data-text_and_labels.csv \
+  --folds 5 \
+  --output outputs/cv_baseline.json
 ```
 
 ### Predict with baseline
