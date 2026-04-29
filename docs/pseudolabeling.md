@@ -271,6 +271,7 @@ print('Paths exist:', all(os.path.exists(os.path.join('data/processed', e['path'
 - Consider retraining the baseline with class weights and re-running pseudolabeling.
 - Prefer the built-in class-balanced fallback before lowering the threshold further.
 - If you are still coverage-starved, tune `--min-silver-rows`, `--min-silver-fraction`, and `--min-per-class` instead of pushing the cutoff too low.
+- The manifest now auto-includes the gold shard when it can find `data/raw/train.csv` (or the legacy `train_data-text_and_labels.csv`), so you should get a true gold+silver combined manifest by default.
 
 ### Important observed outcome
 

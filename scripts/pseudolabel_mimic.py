@@ -510,6 +510,28 @@ def get_max_row_id(gold_path: Path) -> int:
     return int(row_ids.max())
 
 
+def resolve_gold_csv(explicit_path: str | None, config_train_csv: Path) -> Path | None:
+    """Choose the gold CSV used in the combined manifest.
+
+    Preference order:
+      1. explicit --gold-csv if provided
+      2. config.train_csv (project default)
+      3. legacy train_data-text_and_labels.csv path
+    """
+    if explicit_path:
+        candidate = Path(explicit_path)
+        return candidate if candidate.exists() else None
+
+    candidates = [
+        config_train_csv,
+        Path("data/raw/train_data-text_and_labels.csv"),
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def main() -> None:
     args = parse_args()
     config = get_config()
@@ -595,8 +617,8 @@ def main() -> None:
     )
 
     # 6) Write silver CSV with sequential integer row_ids.
-    gold_path = Path(args.gold_csv) if args.gold_csv else Path("data/raw/train_data-text_and_labels.csv")
-    row_id_offset = get_max_row_id(gold_path) if gold_path.exists() else 0
+    gold_path = resolve_gold_csv(args.gold_csv, config.train_csv)
+    row_id_offset = get_max_row_id(gold_path) if gold_path is not None else 0
     silver_rows: list[dict] = []
     for seq, record in enumerate(selected_records, start=1):
         idx = int(record["idx"])
