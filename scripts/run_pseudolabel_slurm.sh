@@ -1,58 +1,41 @@
 #!/bin/bash
 #SBATCH --job-name=pseudolabel-mimic
-#SBATCH --output=logs/pseudolabel_%j.out
-#SBATCH --error=logs/pseudolabel_%j.err
+#SBATCH --output=/scratch/user/kcao/csce421-final-project/logs/pseudolabel_%j.out
+#SBATCH --error=/scratch/user/kcao/csce421-final-project/logs/pseudolabel_%j.err
 #SBATCH --time=02:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-
-# Grace HPRC environment setup
-# Adjust partition/time/mem based on availability and MIMIC size
+#SBATCH --partition=short
 
 set -euo pipefail
 
-# ---- Config (edit these) ----
-PROJECT_ROOT="/scratch/user/kevin.nguyen/csce421/final_project/421-final-project"                   # <-- change this
-MIMIC_CSV="/scratch/user/kevin.nguyen/csce421/final_project/mimiciii/NOTEEVENTS.csv.gz"             # <-- SET THIS
+PROJECT_ROOT="/home/kyler/projects/csce421-final-project"
+MIMIC_CSV="/path/to/NOTEEVENTS.csv.gz"          # set to your Grace path
 BASELINE_MODEL="${PROJECT_ROOT}/models/baseline_model.pkl"
 OUTPUT_DIR="${PROJECT_ROOT}/data/processed"
-CONFIDENCE=0.95
+CONFIDENCE=0.90
+MIN_SILVER_ROWS=1000
+MIN_SILVER_FRACTION=0.01
+MIN_PER_CLASS=250
 BATCH_SIZE=512
-# --------------------------------
+PYTHON_BIN="/scratch/user/kcao/.conda/envs/tempdata/bin/python"
 
-# Load Python (Grace environment)
-module load GCCcore/13.2.0
-module load Python/3.11.5
-
-# Enter project
+mkdir -p /scratch/user/kcao/csce421-final-project/logs
 cd "${PROJECT_ROOT}"
 
-# Make src/ importable
+export PYTHONUNBUFFERED=1
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 
-# Activate venv (create if missing)
-if [ ! -d ".venv" ]; then
-    python -m venv .venv
-fi
-source .venv/bin/activate
-
-# Install deps (only needed first time)
-pip install -q -r requirements.txt
-
-# Create logs dir
-mkdir -p logs
-
-# Ensure multithreading uses allocated CPUs
-export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
-
-# Run pseudolabeling
 echo "Starting pseudolabeling at $(date)"
-python scripts/pseudolabel_mimic.py \
+"${PYTHON_BIN}" scripts/pseudolabel_mimic.py \
   --mimic-csv "${MIMIC_CSV}" \
   --baseline-path "${BASELINE_MODEL}" \
   --output-dir "${OUTPUT_DIR}" \
   --confidence "${CONFIDENCE}" \
+  --min-silver-rows "${MIN_SILVER_ROWS}" \
+  --min-silver-fraction "${MIN_SILVER_FRACTION}" \
+  --min-per-class "${MIN_PER_CLASS}" \
   --batch-size "${BATCH_SIZE}" \
   --categories "Discharge summary"
 
