@@ -14,7 +14,10 @@ PROJECT_ROOT="/home/kyler/projects/csce421-final-project"
 MIMIC_CSV="/path/to/NOTEEVENTS.csv.gz"          # set to your Grace path
 BASELINE_MODEL="${PROJECT_ROOT}/models/baseline_model.pkl"
 OUTPUT_DIR="${PROJECT_ROOT}/data/processed"
-CONFIDENCE=0.95
+CONFIDENCE=0.90
+MIN_SILVER_ROWS=1000
+MIN_SILVER_FRACTION=0.01
+MIN_PER_CLASS=250
 BATCH_SIZE=512
 PYTHON_BIN="/scratch/user/kcao/.conda/envs/tempdata/bin/python"
 
@@ -30,6 +33,9 @@ echo "Starting pseudolabeling at $(date)"
   --baseline-path "${BASELINE_MODEL}" \
   --output-dir "${OUTPUT_DIR}" \
   --confidence "${CONFIDENCE}" \
+  --min-silver-rows "${MIN_SILVER_ROWS}" \
+  --min-silver-fraction "${MIN_SILVER_FRACTION}" \
+  --min-per-class "${MIN_PER_CLASS}" \
   --batch-size "${BATCH_SIZE}" \
   --categories "Discharge summary"
 

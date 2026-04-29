@@ -8,7 +8,7 @@ This document expands on the README's Pseudolabeling section with implementation
 |----------|-----------|------------------------|
 | **Self-training vs. distant supervision** | Use gold-trained baseline predictions rather than ICD-9 code heuristics | Mapping `DIAGNOSES_ICD` → labels introduces noisy patterns (comorbidities, billing codes, historical conditions) that don't necessarily indicate codable content in the current note |
 | **Sentence-aware chunking** | Prevent sentence-splitting across chunk boundaries (preserves semantic coherence) | Naïve 128-whitespace-token truncation cuts mid-sentence, fragments clinical meaning |
-| **Confidence threshold 0.95** | High precision for silver labels; err on the side of clean data | Lower thresholds increase silver volume but risk label noise that could poison fine-tuning |
+| **Class-balanced confidence + top-k fallback** | High precision first, but guarantee a non-empty silver set when the teacher is over-conservative | A hard 0.95 cutoff can yield zero rows on tiny/biasy teachers; fallback keeps the dataset usable without dropping quality controls |
 | **Global integer row_id** | `row_id` in `src/contracts.py` is typed as `int`; string concatenation (`123_0`) would fail downstream | Use a single monotonic counter that never resets per-note; offsets in the manifest separate gold vs. silver ranges |
 | **Relative manifest paths** | Manifest and code should be portable across Mac dev → Grace cluster → any downstream runner | Absolute paths bind the artifact to one machine; relative to manifest directory is the convention in `src/data.py` |
 
@@ -29,11 +29,14 @@ NOTEEVENTS.csv.gz (MIMIC)
   BaselineModel.predict_proba(batch)
         │
         ▼
-  keep if max(proba) ≥ 0.95
+  keep if proba ≥ confidence threshold
+  otherwise, fill up to a minimum silver budget with
+  class-balanced top-k examples
         │
         ▼
   pseudolabels.csv
-  (row_id, text, label)
+  (row_id, text, label, confidence,
+   source_row_id, chunk_idx, selection_reason)
         │
         ▼
   manifest.json
@@ -235,12 +238,12 @@ print('Paths exist:', all(os.path.exists(os.path.join('data/processed', e['path'
 **If silver labels are all 0 or all 1:**
 - Inspect gold training balance (`data/raw/train.csv` label distribution). The baseline inherits that bias.
 - Consider retraining the baseline with class weights and re-running pseudolabeling.
-- Lowering `--confidence` may also recover the minority class if it is hard to predict.
-- If you still get zero rows, lower the threshold to `0.90` or add a top-k fallback.
+- Prefer the built-in class-balanced fallback before lowering the threshold further.
+- If you are still coverage-starved, tune `--min-silver-rows`, `--min-silver-fraction`, and `--min-per-class` instead of pushing the cutoff too low.
 
 ### Important observed outcome
 
-The known-good Grace run completed successfully, but with the current teacher + threshold it wrote **0 silver rows** because nothing exceeded the confidence cutoff. The run itself was healthy; the next fix is data selection/teacher quality, not the Grace environment.
+The old Grace run completed successfully but wrote **0 silver rows** because nothing exceeded the confidence cutoff. The updated script now keeps a class-balanced fallback set, so that failure mode is no longer expected. The run itself was healthy; the environment was not the issue.
 
 ## Integration with transformer training
 
@@ -265,7 +268,7 @@ python -m src.train_transformer \
 
 ## Cleaning up / re-running
 
-- To regenerate pseudolabels with a different confidence: delete `data/processed/pseudolabels.csv` and `data/processed/manifest.json`, adjust `CONFIDENCE` in the Slurm script (or pass `--confidence` on the command line), and re-submit.
+- To regenerate pseudolabels with a different confidence or silver budget: delete `data/processed/pseudolabels.csv` and `data/processed/manifest.json`, adjust `--confidence`, `--min-silver-rows`, `--min-silver-fraction`, and `--min-per-class` in the Slurm script, and re-submit.
 - To change the MIMIC category filter: `--categories "Discharge summary,Radiology"` (comma-separated; no spaces around commas).
 - To process the entire `NOTEEVENTS` (all categories): `--categories ""` (empty string disables filtering). Be aware this expands the job 3–5× in runtime.
 
