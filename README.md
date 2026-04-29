@@ -173,6 +173,16 @@ This pipeline uses **self-training**: a gold-trained baseline model (TF-IDF + Lo
 - Respects the project's strict binary-label validation (0/1 only)
 - Keeps the signal clean: only model-predicted fragments that cross a high confidence threshold become training data
 
+## Setup
+
+To create a fresh environment and install dependencies:
+
+```bash
+rm -rf .venv
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
 ### 1. `scripts/pseudolabel_mimic.py`
 
 **Purpose:** Chunk MIMIC notes into 128-word fragments (sentence-aware), run batched inference with a trained baseline, filter by confidence, and emit a manifest that unions gold + silver sources.
