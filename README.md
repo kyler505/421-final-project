@@ -185,7 +185,7 @@ pip install -r requirements.txt
 
 ### 1. `scripts/pseudolabel_mimic.py`
 
-**Purpose:** Chunk MIMIC notes into 128-word fragments (sentence-aware), run batched inference with a trained baseline, filter by confidence, and emit a manifest that unions gold + silver sources.
+**Purpose:** Chunk MIMIC notes into 128-word fragments (sentence-aware), run batched inference with a teacher model, filter by confidence, and emit a manifest that unions gold + silver sources. By default it keeps the baseline TF-IDF teacher; you can switch to a transformer teacher fine-tuned on the gold set.
 
 **Key flags:**
 
@@ -193,6 +193,10 @@ pip install -r requirements.txt
 |------|-----------|---------|-------------|
 | `--mimic-csv` | yes | — | Path to `NOTEEVENTS.csv` or `NOTEEVENTS.csv.gz` |
 | `--baseline-path` | no | `models/baseline_model.pkl` (from config) | Trained baseline model |
+| `--teacher-mode` | no | `baseline` | Teacher backend: `baseline` or `transformer` |
+| `--teacher-path` | no | (auto) | Fine-tuned transformer checkpoint for `--teacher-mode transformer` |
+| `--teacher-batch-size` | no | (same as `--batch-size`) | Optional inference batch size override for transformer teacher |
+| `--teacher-max-length` | no | `config.max_length` | Optional token length override for transformer teacher |
 | `--output-dir` | no | `data/processed/` | Where `pseudolabels.csv` + `manifest.json` are written |
 | `--confidence` | no | `0.95` | Minimum `predict_proba` to include a silver fragment |
 | `--max-words` | no | `128` (from `config.max_words_course`) | Fragment word limit per chunk |
