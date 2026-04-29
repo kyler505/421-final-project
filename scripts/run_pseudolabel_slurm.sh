@@ -1,48 +1,31 @@
 #!/bin/bash
 #SBATCH --job-name=pseudolabel-mimic
-#SBATCH --output=logs/pseudolabel_%j.out
-#SBATCH --error=logs/pseudolabel_%j.err
+#SBATCH --output=/scratch/user/kcao/csce421-final-project/logs/pseudolabel_%j.out
+#SBATCH --error=/scratch/user/kcao/csce421-final-project/logs/pseudolabel_%j.err
 #SBATCH --time=02:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --partition=normal
-
-# Grace HPRC environment setup
-# Adjust partition/time/mem based on availability and MIMIC size
+#SBATCH --partition=short
 
 set -euo pipefail
 
-# ---- Config (edit these) ----
 PROJECT_ROOT="/home/kyler/projects/csce421-final-project"
-MIMIC_CSV="/path/to/NOTEEVENTS.csv.gz"          # <-- SET THIS
+MIMIC_CSV="/path/to/NOTEEVENTS.csv.gz"          # set to your Grace path
 BASELINE_MODEL="${PROJECT_ROOT}/models/baseline_model.pkl"
 OUTPUT_DIR="${PROJECT_ROOT}/data/processed"
 CONFIDENCE=0.95
 BATCH_SIZE=512
-# --------------------------------
+PYTHON_BIN="/scratch/user/kcao/.conda/envs/tempdata/bin/python"
 
-# Load Python (Grace environment)
-module load python/3.11  # or your available Python module
-
-# Enter project
+mkdir -p /scratch/user/kcao/csce421-final-project/logs
 cd "${PROJECT_ROOT}"
 
-# Activate venv (create if missing)
-if [ ! -d ".venv" ]; then
-    python -m venv .venv
-fi
-source .venv/bin/activate
+export PYTHONUNBUFFERED=1
+export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 
-# Install deps (only needed first time)
-pip install -q -r requirements.txt
-
-# Create logs dir
-mkdir -p logs
-
-# Run pseudolabeling
 echo "Starting pseudolabeling at $(date)"
-python scripts/pseudolabel_mimic.py \
+"${PYTHON_BIN}" scripts/pseudolabel_mimic.py \
   --mimic-csv "${MIMIC_CSV}" \
   --baseline-path "${BASELINE_MODEL}" \
   --output-dir "${OUTPUT_DIR}" \

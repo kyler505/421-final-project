@@ -122,6 +122,20 @@ If you want to experiment with multiple silver sources (e.g., 0.90 and 0.95 thre
 
 ## Grace/HPRC execution details
 
+### Known-good Grace runbook
+
+The version that worked on Grace uses the prebuilt `tempdata` environment and avoids runtime installs entirely:
+
+- direct Python: `/scratch/user/kcao/.conda/envs/tempdata/bin/python`
+- Slurm stdout/stderr on scratch: `/scratch/user/kcao/csce421-final-project/logs/`
+- project root on Grace: `/home/kcao/projects/csce421-final-project`
+- no `pip install` inside the batch job
+- set `PYTHONPATH` to the project root so `src` imports resolve
+- set `PYTHONUNBUFFERED=1` so logs appear immediately
+- submit with `/sw/local/bin/sbatch` when PATH is unreliable through `thinkpad-work`
+
+The working Slurm wrapper now lives in `scripts/run_pseudolabel_slurm.sh` and is safe to copy to Grace as-is after you set `MIMIC_CSV`.
+
 ### File placement (suggested)
 
 ```
@@ -157,15 +171,15 @@ Alternatively, push to GitHub on your Mac and `git pull` on Grace.
 
 | Resource | Setting | Rationale |
 |----------|---------|-----------|
-| `--time` | `02:00:00` (2 h) | Full `NOTEEVENTS` (~2M rows) filtered to Discharge summaries ≤200k notes; 256 batch × 8 CPUs can process in ~90 min on a modern node |
-| `--mem` | `32G` | TF-IDF vectorizer holds corpus in sparse memory; 32 GB comfortably fits all chunks |
-| `--cpus-per-task` | `8` | Parallel inference via joblib (inside `BaselineModel.predict`) — 8 cores speeds up batch predict by ~7× |
-| `--partition` | `normal` | Adjust to your lab/allocation queue; use `short` for tests; `highmem` not required |
+| `--time` | `02:00:00` (2 h) | Full `NOTEEVENTS` filtered to discharge summaries fits in this window on a compute node |
+| `--mem` | `32G` | TF-IDF vectorizer and chunk buffers fit comfortably |
+| `--cpus-per-task` | `8` | Batch inference benefits from multiple CPU cores |
+| `--partition` | `short` | Good default for validation runs; increase only if needed |
 
 **To estimate runtime locally:**
 ```bash
-# Install scikit-learn ≥ 1.0 for parallel predict (n_jobs defaults to 1 here; you can bump in BaselineModel)
-time python scripts/pseudolabel_mimic.py --mimic-csv sample.csv --sample 1000
+# Use the same Python entrypoint and a small sample
+/scratch/user/kcao/.conda/envs/tempdata/bin/python scripts/pseudolabel_mimic.py --mimic-csv sample.csv --sample 1000
 # Scale linearly: (total_notes / 1000) × elapsed_seconds ≈ wall-clock on Grace
 ```
 
@@ -173,27 +187,29 @@ time python scripts/pseudolabel_mimic.py --mimic-csv sample.csv --sample 1000
 
 ```bash
 # Job submitted: SBATCH writes JOBID
-JOBID=$(sbatch scripts/run_pseudolabel_slurm.sh | grep -o '[0-9]*')
+JOBID=$(/sw/local/bin/sbatch --parsable scripts/run_pseudolabel_slurm.sh)
 echo "Job ID: $JOBID"
 
-# Stream live (if still running)
-tail -f logs/pseudolabel_${JOBID}.out
+# Check status
+squeue -j $JOBID -o '%.18i %.9T %.10M %.6D %.20R'
+sacct -j $JOBID --format=JobID,State,ExitCode,Elapsed,NodeList -P -n
 
-# After completion, view summary
-cat logs/pseudolabel_${JOBID}.out | grep -E "Processing|Chunked|kept|rows|manifests written"
-
-# Check resource usage
-sacct -j $JOBID --format=JobID,State,Elapsed,MaxRSS,Node,AllocCPUs,ReqMem
+# Read the logs on scratch
+less /scratch/user/kcao/csce421-final-project/logs/pseudolabel_${JOBID}.out
+less /scratch/user/kcao/csce421-final-project/logs/pseudolabel_${JOBID}.err
 ```
 
 Typical successful output tail:
 ```
-Completed pseudolabeling: 184732 fragments total, 12745 kept (confidence ≥ 0.95)
-Wrote pseudolabels CSV: data/processed/pseudolabels.csv (12745 rows)
-Wrote manifest: data/processed/manifest.json
+Starting pseudolabeling at Tue Apr 28 22:41:22 CDT 2026
+...
+Pseudolabeling complete.
+Next: train combined baseline with:
+  python -m src.train_baseline --train-manifest /home/kcao/projects/csce421-final-project/data/processed/manifest.json --output models/baseline_model_combined.pkl
+Completed at Tue Apr 28 22:47:07 CDT 2026
 ```
 
-## Label balance and post-filter sanity checks
+### Label balance and post-filter sanity checks
 
 After the Slurm job finishes, run these quick checks on Grace:
 
@@ -201,27 +217,30 @@ After the Slurm job finishes, run these quick checks on Grace:
 # 1. Row count
 wc -l data/processed/pseudolabels.csv
 
-# 2. Label distribution (expect heavily skewed towards 0 or 1 depending on your gold set)
+# 2. Label distribution
 python -c "
-import pandas as pd, json
-df = pd.read_csv('data/processed/pseudolabels.csv')
-print(df['label'].value_counts(normalize=True))
+import pandas as pd
+print(pd.read_csv('data/processed/pseudolabels.csv')['label'].value_counts(normalize=True))
 "
 
 # 3. Manifest integrity
 python -c "
-import json, yaml
+import json, os
 m = json.load(open('data/processed/manifest.json'))
-print('Shards:', [s['source'] for s in m['shards']])
-print('Paths relative to manifest dir; all exist:',
-      all(__import__('os').path.exists(__import__('os').path.join('data/processed', s['path'])) for s in m['shards']))
+print('Entries:', len(m['entries']))
+print('Paths exist:', all(os.path.exists(os.path.join('data/processed', e['path'])) for e in m['entries']))
 "
 ```
 
 **If silver labels are all 0 or all 1:**
 - Inspect gold training balance (`data/raw/train.csv` label distribution). The baseline inherits that bias.
-- Consider retraining the baseline with class weights (`--class-weight balanced`) and re-running pseudolabeling.
-- Lowering `--confidence` may also recover the minority class if it's inherently hard to predict.
+- Consider retraining the baseline with class weights and re-running pseudolabeling.
+- Lowering `--confidence` may also recover the minority class if it is hard to predict.
+- If you still get zero rows, lower the threshold to `0.90` or add a top-k fallback.
+
+### Important observed outcome
+
+The known-good Grace run completed successfully, but with the current teacher + threshold it wrote **0 silver rows** because nothing exceeded the confidence cutoff. The run itself was healthy; the next fix is data selection/teacher quality, not the Grace environment.
 
 ## Integration with transformer training
 
