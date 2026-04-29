@@ -10,8 +10,8 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="/home/kyler/projects/csce421-final-project"
-MIMIC_CSV="/path/to/NOTEEVENTS.csv.gz"          # set to your Grace path
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+MIMIC_CSV="${PROJECT_ROOT}/data/raw/NOTEEVENTS.csv.gz"
 BASELINE_MODEL="${PROJECT_ROOT}/models/baseline_model.pkl"
 OUTPUT_DIR="${PROJECT_ROOT}/data/processed"
 CONFIDENCE=0.90
