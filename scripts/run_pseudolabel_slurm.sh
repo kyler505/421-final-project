@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PROJECT_ROOT="${SLURM_SUBMIT_DIR:-$(pwd)}"
 MIMIC_CSV="${PROJECT_ROOT}/data/raw/NOTEEVENTS.csv.gz"
 BASELINE_MODEL="${PROJECT_ROOT}/models/baseline_model.pkl"
 OUTPUT_DIR="${PROJECT_ROOT}/data/processed"
@@ -37,7 +37,7 @@ export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 
 echo "Starting pseudolabeling at $(date)"
 cmd=(
-  "${PYTHON_BIN}" scripts/pseudolabel_mimic.py
+  "${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/pseudolabel_mimic.py"
   --mimic-csv "${MIMIC_CSV}"
   --baseline-path "${BASELINE_MODEL}"
   --output-dir "${OUTPUT_DIR}"
