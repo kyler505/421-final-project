@@ -6,7 +6,6 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --partition=normal
 
 # Grace HPRC environment setup
 # Adjust partition/time/mem based on availability and MIMIC size
@@ -14,8 +13,8 @@
 set -euo pipefail
 
 # ---- Config (edit these) ----
-PROJECT_ROOT="/home/kyler/projects/csce421-final-project"
-MIMIC_CSV="/path/to/NOTEEVENTS.csv.gz"          # <-- SET THIS
+PROJECT_ROOT="/scratch/user/kevin.nguyen/csce421/final_project/421-final-project"                   # <-- change this
+MIMIC_CSV="/scratch/user/kevin.nguyen/csce421/final_project/mimiciii/NOTEEVENTS.csv.gz"             # <-- SET THIS
 BASELINE_MODEL="${PROJECT_ROOT}/models/baseline_model.pkl"
 OUTPUT_DIR="${PROJECT_ROOT}/data/processed"
 CONFIDENCE=0.95
@@ -23,10 +22,14 @@ BATCH_SIZE=512
 # --------------------------------
 
 # Load Python (Grace environment)
-module load python/3.11  # or your available Python module
+module load GCCcore/13.2.0
+module load Python/3.11.5
 
 # Enter project
 cd "${PROJECT_ROOT}"
+
+# Make src/ importable
+export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 
 # Activate venv (create if missing)
 if [ ! -d ".venv" ]; then
@@ -39,6 +42,9 @@ pip install -q -r requirements.txt
 
 # Create logs dir
 mkdir -p logs
+
+# Ensure multithreading uses allocated CPUs
+export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
 # Run pseudolabeling
 echo "Starting pseudolabeling at $(date)"
