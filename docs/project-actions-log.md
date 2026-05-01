@@ -18,6 +18,12 @@ This is a short chronological record of the main project actions we completed wh
 | 2026-04-29 (session) | Interpreted the results | The combined TF-IDF + logistic regression baseline remained the safest ship model; the transformer looked like a useful experiment but not a clear replacement. |
 | 2026-04-29 (session) | Added a reusable Slurm wrapper for transformer training | `scripts/run_transformer_slurm.sh` now lives in the repo so teammates can reuse the Grace setup. |
 | 2026-04-29 (session) | Added this log to the repo | Gives teammates a readable record of the project work and the key decisions made along the way. |
+| 2026-04-30 (session) | Ran baseline teacher pseudolabel pass | Produced only 7,620 silver rows, all from confidence fallback (0.57–0.65). Baseline teacher too weak. |
+| 2026-04-30 (session) | Proposed transformer as teacher for pseudolabeling | Approved by user — switch from TF-IDF+LR teacher to ClinicalBERT teacher. |
+| 2026-04-30 (session) | Submitted transformer teacher pseudolabel job (`18478481`) | Produced 665k silver rows from 59,652 MIMIC-III notes — vastly better coverage. |
+| 2026-04-30 (session) | Retrained baseline + transformer on new silver data | Both models trained on gold + 665k transformer-teacher pseudolabels. |
+| 2026-04-30 (session) | Ran full four-way comparison on test01/02/03 | Compared old gold-only, old combined, new baseline, new transformer. |
+| 2026-04-30 (session) | Interpretation of four-way results | New models agree ~91% — training on same high-quality silver produces consistent predictions. Old combined was an outlier (over-permissive). New models are closer to gold. Transformer-teacher pseudolabeling worked. |
 
 ## Short takeaway
 
@@ -25,6 +31,16 @@ The repo now includes:
 
 - a reusable Grace transformer Slurm wrapper
 - this action log for teammate context
-- the existing pseudolabeling documentation and runbook material
+- transformer-teacher pseudolabeling pipeline (665k silver rows)
+- full four-way model comparison results
+- documented conclusion: transformer-teacher pseudolabels produce better models; the classical baseline trained on them is the safest deliverable
 
-The main technical conclusion from the work is still the same: the combined classical baseline is the safest final model, and ClinicalBERT is useful as a comparison experiment rather than a drop-in replacement.
+## Key numbers
+
+| Metric | Value |
+| --- | --- |
+| Baseline teacher silver rows | 7,620 |
+| Transformer teacher silver rows | 665k |
+| New Baseline vs New Transformer agreement | ~91% |
+| New models vs Gold-only agreement (test02) | ~70% |
+| Old Combined vs Gold-only agreement (test02) | ~72% |
