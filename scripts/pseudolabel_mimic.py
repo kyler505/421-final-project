@@ -1,17 +1,20 @@
 #!/usr/bin/env python3
-"""Pseudolabel MIMIC-III NOTEEVENTS using a trained baseline model.
+"""Pseudolabel MIMIC-III NOTEEVENTS using a teacher model.
 
 Workflow:
   1. Load MIMIC NOTEEVENTS (gzip or plain CSV). Filter by CATEGORY if provided.
   2. Chunk each note into 128-word fragments, sentence-aware.
-  3. Run baseline model.predict_proba() on all chunks in batches.
+  3. Run a teacher model on all chunks in batches.
+     - baseline: TF-IDF + Logistic Regression
+     - transformer: fine-tuned sequence classifier checkpoint
   4. Keep high-confidence predictions, but fall back to class-balanced top-k
      selection if the confidence threshold yields too few silver rows.
   5. Write silver CSV: row_id, text, label (+ provenance columns).
   6. Write manifest combining gold CSV + silver CSV.
 
-Dependencies: pandas, scikit-learn (already in requirements.txt).
-Baseline model must already exist at --baseline-path.
+Dependencies: pandas, scikit-learn, and optionally torch/transformers when using
+``--teacher-mode transformer``.
+The baseline teacher model must already exist at --baseline-path.
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ from src.models.baseline import BaselineModel
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Pseudolabel MIMIC-III using baseline model")
+    parser = argparse.ArgumentParser(description="Pseudolabel MIMIC-III using teacher model")
     parser.add_argument(
         "--mimic-csv",
         required=True,
@@ -45,6 +48,29 @@ def parse_args() -> argparse.Namespace:
         "--baseline-path",
         default=None,
         help="Path to baseline_model.pkl (default: from config)",
+    )
+    parser.add_argument(
+        "--teacher-mode",
+        choices=("baseline", "transformer"),
+        default="baseline",
+        help="Teacher backend to use for pseudolabeling",
+    )
+    parser.add_argument(
+        "--teacher-path",
+        default=None,
+        help="Path to a fine-tuned transformer checkpoint (required for teacher-mode=transformer)",
+    )
+    parser.add_argument(
+        "--teacher-batch-size",
+        type=int,
+        default=None,
+        help="Optional batch size override for transformer teacher inference",
+    )
+    parser.add_argument(
+        "--teacher-max-length",
+        type=int,
+        default=None,
+        help="Optional token length override for transformer teacher inference",
     )
     parser.add_argument(
         "--output-dir",
@@ -211,21 +237,86 @@ def load_mimic_notes(
     return df.reset_index(drop=True)
 
 
-def run_inference(
+def run_baseline_inference(
     model: BaselineModel,
     chunks: list[str],
     batch_size: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Return (predictions, probabilities) for all chunks."""
+    """Return (predictions, probabilities) for a baseline teacher."""
     preds_list: list[int] = []
     probs_list: list[float] = []
     total = len(chunks)
-    for i in tqdm(range(0, total, batch_size), desc="Inferring", unit="batch"):
+    for i in tqdm(range(0, total, batch_size), desc="Inferring (baseline)", unit="batch"):
         batch = chunks[i : i + batch_size]
         batch_preds = model.predict(batch)
         batch_probs = model.predict_proba(batch)[:, 1]  # P(class=1)
         preds_list.extend(batch_preds.tolist())
         probs_list.extend(batch_probs.tolist())
+    return np.array(preds_list), np.array(probs_list)
+
+
+def load_transformer_teacher(teacher_path: str | Path):
+    """Load a sequence-classification checkpoint for teacher inference."""
+    try:
+        import torch
+        from transformers import AutoModelForSequenceClassification, AutoTokenizer
+    except ImportError as exc:
+        raise RuntimeError(
+            "Transformer teacher mode requires torch and transformers to be installed"
+        ) from exc
+
+    teacher_path = Path(teacher_path)
+    if not teacher_path.exists():
+        raise FileNotFoundError(f"Transformer teacher checkpoint not found: {teacher_path}")
+
+    tokenizer = AutoTokenizer.from_pretrained(teacher_path)
+    model = AutoModelForSequenceClassification.from_pretrained(teacher_path)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model.to(device)
+    model.eval()
+    return tokenizer, model, device
+
+
+def run_transformer_inference(
+    teacher_path: str | Path,
+    chunks: list[str],
+    batch_size: int,
+    max_length: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return (predictions, probabilities) for a transformer teacher."""
+    tokenizer, model, device = load_transformer_teacher(teacher_path)
+
+    try:
+        import torch
+    except ImportError as exc:
+        raise RuntimeError("Transformer teacher mode requires torch to be installed") from exc
+
+    preds_list: list[int] = []
+    probs_list: list[float] = []
+    total = len(chunks)
+    for i in tqdm(range(0, total, batch_size), desc="Inferring (transformer)", unit="batch"):
+        batch = chunks[i : i + batch_size]
+        encoded = tokenizer(
+            batch,
+            truncation=True,
+            padding=True,
+            max_length=max_length,
+            return_tensors="pt",
+        )
+        encoded = {key: value.to(device) for key, value in encoded.items()}
+        with torch.no_grad():
+            outputs = model(**encoded)
+            logits = outputs.logits
+            if logits.shape[-1] == 1:
+                probs = torch.sigmoid(logits.squeeze(-1))
+                batch_probs = probs
+                batch_preds = (probs >= 0.5).long()
+            else:
+                probs = torch.softmax(logits, dim=-1)
+                batch_probs = probs[:, 1]
+                batch_preds = torch.argmax(probs, dim=-1)
+        preds_list.extend(batch_preds.detach().cpu().tolist())
+        probs_list.extend(batch_probs.detach().cpu().tolist())
     return np.array(preds_list), np.array(probs_list)
 
 
@@ -370,7 +461,8 @@ def write_manifest(
     manifest_path: Path,
     gold_path: Path | None,
     silver_paths: list[Path],
-    baseline_path: Path,
+    teacher_path: Path,
+    teacher_mode: str,
     confidence: float,
     total_rows: int,
     notes: str,
@@ -395,7 +487,9 @@ def write_manifest(
     payload = {
         "version": 1,
         "entries": entries,
-        "baseline_model": make_relative_path(baseline_path, base_dir),
+        "baseline_model": make_relative_path(teacher_path, base_dir),
+        "teacher_mode": teacher_mode,
+        "teacher_model": make_relative_path(teacher_path, base_dir),
         "total_rows": total_rows,
         "notes": notes,
     }
@@ -416,13 +510,36 @@ def get_max_row_id(gold_path: Path) -> int:
     return int(row_ids.max())
 
 
+def resolve_gold_csv(explicit_path: str | None, config_train_csv: Path) -> Path | None:
+    """Choose the gold CSV used in the combined manifest.
+
+    Preference order:
+      1. explicit --gold-csv if provided
+      2. config.train_csv (project default)
+      3. legacy train_data-text_and_labels.csv path
+    """
+    if explicit_path:
+        candidate = Path(explicit_path)
+        return candidate if candidate.exists() else None
+
+    candidates = [
+        config_train_csv,
+        Path("data/raw/train_data-text_and_labels.csv"),
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def main() -> None:
     args = parse_args()
     config = get_config()
 
     # Paths.
     baseline_path = Path(args.baseline_path) if args.baseline_path else config.baseline_model_path
-    if not baseline_path.exists():
+    teacher_mode = args.teacher_mode
+    if teacher_mode == "baseline" and not baseline_path.exists():
         print(f"Error: baseline model not found: {baseline_path}", file=sys.stderr)
         sys.exit(1)
 
@@ -430,6 +547,23 @@ def main() -> None:
     max_words = args.max_words or config.max_words_course
     categories = normalize_categories(args.categories)
     print(f"Categories filter: {categories if categories else '<disabled>'}")
+
+    if teacher_mode == "baseline":
+        teacher_path = baseline_path
+        teacher_batch_size = args.teacher_batch_size or args.batch_size
+        teacher_max_length = args.teacher_max_length or config.max_length
+    else:
+        teacher_path = Path(args.teacher_path) if args.teacher_path else config.transformer_model_path
+        teacher_batch_size = args.teacher_batch_size or args.batch_size
+        teacher_max_length = args.teacher_max_length or config.max_length
+        if not teacher_path.exists():
+            print(
+                f"Error: transformer teacher checkpoint not found: {teacher_path}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+    print(f"Teacher mode: {teacher_mode} ({teacher_path})")
 
     # 1) Load MIMIC notes.
     print(f"Loading MIMIC notes from {args.mimic_csv} …")
@@ -452,14 +586,21 @@ def main() -> None:
         print("No chunks produced — exiting.", file=sys.stderr)
         sys.exit(1)
 
-    # 3) Load baseline model.
-    print(f"Loading baseline model from {baseline_path} …")
-    model = BaselineModel.load(baseline_path)
+    # 3) Load teacher model and infer.
+    if teacher_mode == "baseline":
+        print(f"Loading baseline teacher from {teacher_path} …")
+        model = BaselineModel.load(teacher_path)
+        preds, probs = run_baseline_inference(model, all_chunks, teacher_batch_size)
+    else:
+        print(f"Loading transformer teacher from {teacher_path} …")
+        preds, probs = run_transformer_inference(
+            teacher_path=teacher_path,
+            chunks=all_chunks,
+            batch_size=teacher_batch_size,
+            max_length=teacher_max_length,
+        )
 
-    # 4) Inference.
-    preds, probs = run_inference(model, all_chunks, args.batch_size)
-
-    # 5) High-confidence selection with class-balanced fallback.
+    # 4) High-confidence selection with class-balanced fallback.
     selected_records, selection_stats = select_silver_examples(
         probs=probs,
         confidence=args.confidence,
@@ -476,8 +617,8 @@ def main() -> None:
     )
 
     # 6) Write silver CSV with sequential integer row_ids.
-    gold_path = Path(args.gold_csv) if args.gold_csv else Path("data/raw/train_data-text_and_labels.csv")
-    row_id_offset = get_max_row_id(gold_path) if gold_path.exists() else 0
+    gold_path = resolve_gold_csv(args.gold_csv, config.train_csv)
+    row_id_offset = get_max_row_id(gold_path) if gold_path is not None else 0
     silver_rows: list[dict] = []
     for seq, record in enumerate(selected_records, start=1):
         idx = int(record["idx"])
@@ -506,15 +647,16 @@ def main() -> None:
     # 7) Write manifest.
     manifest_path = output_dir / "manifest.json"
     notes = (
-        f"Generated by pseudolabel_mimic.py (conf={args.confidence}, "
-        f"min_rows={args.min_silver_rows}, min_fraction={args.min_silver_fraction}, "
-        f"min_per_class={args.min_per_class})"
+        f"Generated by pseudolabel_mimic.py (teacher_mode={teacher_mode}, teacher={teacher_path}, "
+        f"conf={args.confidence}, min_rows={args.min_silver_rows}, "
+        f"min_fraction={args.min_silver_fraction}, min_per_class={args.min_per_class})"
     )
     write_manifest(
         manifest_path=manifest_path,
         gold_path=gold_path if gold_path.exists() else None,
         silver_paths=[silver_path],
-        baseline_path=baseline_path,
+        teacher_path=teacher_path,
+        teacher_mode=teacher_mode,
         confidence=args.confidence,
         total_rows=len(silver_rows),
         notes=notes,

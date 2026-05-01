@@ -10,6 +10,7 @@ This document expands on the README's Pseudolabeling section with implementation
 | **Sentence-aware chunking** | Prevent sentence-splitting across chunk boundaries (preserves semantic coherence) | Naïve 128-whitespace-token truncation cuts mid-sentence, fragments clinical meaning |
 | **Class-balanced confidence + top-k fallback** | High precision first, but guarantee a non-empty silver set when the teacher is over-conservative | A hard 0.95 cutoff can yield zero rows on tiny/biasy teachers; fallback keeps the dataset usable without dropping quality controls |
 | **Global integer row_id** | `row_id` in `src/contracts.py` is typed as `int`; string concatenation (`123_0`) would fail downstream | Use a single monotonic counter that never resets per-note; offsets in the manifest separate gold vs. silver ranges |
+| **Pluggable teacher selection** | Preserve the baseline path, but allow a stronger transformer teacher fine-tuned on the gold set when the TF-IDF model is too uncertain | Hard-coding only the baseline teacher keeps the pipeline stalled when confidence never clears the cutoff |
 | **Relative manifest paths** | Manifest and code should be portable across Mac dev → Grace cluster → any downstream runner | Absolute paths bind the artifact to one machine; relative to manifest directory is the convention in `src/data.py` |
 
 ## Data flow diagram
@@ -26,10 +27,10 @@ NOTEEVENTS.csv.gz (MIMIC)
   (sentence-aware, ≤128 words)
         │
         ▼
-  BaselineModel.predict_proba(batch)
+  BaselineModel.predict_proba(batch) or transformer logits
         │
         ▼
-  keep if proba ≥ confidence threshold
+  keep if confidence ≥ threshold
   otherwise, fill up to a minimum silver budget with
   class-balanced top-k examples
         │
@@ -41,19 +42,21 @@ NOTEEVENTS.csv.gz (MIMIC)
         ▼
   manifest.json
   {
-    shards: [
-      { path: "data/raw/train.csv", source: "gold",  row_id_offset: 0 },
-      { path: "data/processed/pseudolabels.csv", source: "silver", row_id_offset: 1_000_000 }
-    ]
+    entries: [
+      { path: "data/raw/train.csv", label_source: "gold_human" },
+      { path: "data/processed/pseudolabels.csv", label_source: "silver_pseudolabel_conf_0.90" }
+    ],
+    teacher_mode: "baseline" | "transformer"
   }
         │
         ▼
-  src.train_transformer --train-manifest manifest.json
+  train_transformer --train-manifest manifest.json
         │
         ▼
   combined_dataset = gold ∪ silver
-  fine-tune Bio_ClinicalBERT
+  fine-tune ClinicalBERT / Bio_ClinicalBERT
 ```
+
 
 ## Sentence-aware chunking algorithm
 
@@ -99,6 +102,34 @@ silver_df = pd.DataFrame({
 
 **Why use `predict()` not `predict_proba()` threshold?**
 The model already outputs calibrated probabilities via `predict_proba`. The silver label is simply the argmax of the 2-element vector — exactly mirroring `predict()` — but we gate inclusion by the confidence score. This ensures every silver fragment has a strong signal.
+
+## Teacher route: baseline vs. transformer
+
+The pseudolabeler now accepts a pluggable teacher backend:
+
+- `--teacher-mode baseline` uses the existing TF-IDF + logistic-regression model.
+- `--teacher-mode transformer` loads a fine-tuned sequence-classification checkpoint and uses its softmax/sigmoid scores.
+
+Recommended higher-quality workflow:
+
+```bash
+# 1) Fine-tune a teacher on the gold set
+python -m src.train_transformer \
+  --train data/raw/train_data-text_and_labels.csv \
+  --output models/transformer_teacher \
+  --model_name emilyalsentzer/Bio_ClinicalBERT \
+  --epochs 3 \
+  --batch_size 8
+
+# 2) Pseudolabel with the transformer teacher
+python scripts/pseudolabel_mimic.py \
+  --mimic-csv /path/to/NOTEEVENTS.csv.gz \
+  --teacher-mode transformer \
+  --teacher-path models/transformer_teacher \
+  --output-dir data/processed
+```
+
+The current Grace Slurm wrapper preserves the baseline path by default and only switches to transformer inference when you set `TEACHER_MODE=transformer` and point `TEACHER_PATH` at a checkpoint.
 
 ## Manifest mechanics (`src/manifest.py`)
 
@@ -240,6 +271,7 @@ print('Paths exist:', all(os.path.exists(os.path.join('data/processed', e['path'
 - Consider retraining the baseline with class weights and re-running pseudolabeling.
 - Prefer the built-in class-balanced fallback before lowering the threshold further.
 - If you are still coverage-starved, tune `--min-silver-rows`, `--min-silver-fraction`, and `--min-per-class` instead of pushing the cutoff too low.
+- The manifest now auto-includes the gold shard when it can find `data/raw/train.csv` (or the legacy `train_data-text_and_labels.csv`), so you should get a true gold+silver combined manifest by default.
 
 ### Important observed outcome
 

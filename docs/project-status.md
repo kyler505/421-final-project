@@ -17,7 +17,7 @@ Current repository status for the CSCE 421 final project scaffold.
 
 ## What has been tested
 
-Local checks completed:
+Local and Grace checks completed:
 
 - Python compile check
 - smoke tests (`10 passed`)
@@ -26,6 +26,8 @@ Local checks completed:
   - `test01_text_only.csv`
   - `test02_text_only.csv`
   - `test03_text_only.csv`
+- ClinicalBERT transformer training on Grace (`COMPLETED`, exit `0:0`)
+- transformer inference/evaluation on Grace (`COMPLETED`, exit `0:0`)
 
 ## Current baseline observations
 
@@ -42,13 +44,12 @@ Local checks completed:
 
 - baseline confidence is weak and clustered near 0.5
 - very small labeled set means the baseline is mainly a sanity-check system
-- transformer training path exists but has not yet been run on a local offline checkpoint
+- transformer training path has now been run on Grace and is useful as a comparison experiment, not a default replacement
 - no cross-validation / ablation / report figures yet
 - no MIMIC-III weak-supervision pipeline yet
 
 ## Recommended next steps
 
-1. improve the baseline with stronger tokenization / n-gram settings
-2. run a domain-specific transformer from a local checkpoint
-3. decide whether to use MIMIC-III for weak supervision or extra unlabeled data
-4. add evaluation and experiments for the final report
+1. decide whether to ship the combined baseline or keep the transformer as a comparison in the final report
+2. add evaluation and experiment figures for the final report
+3. optionally improve tokenization / n-gram settings if time remains
