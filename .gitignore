@@ -58,6 +58,7 @@ outputs/*.csv
 outputs/*.json
 !outputs/.gitkeep
 !outputs/test*-pred.csv
+!outputs/test*-pred-tf.csv
 !outputs/test*-pred-tf-teacher.csv
 
 # Reports
