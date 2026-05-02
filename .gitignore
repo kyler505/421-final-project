@@ -49,11 +49,16 @@ models/*.pt
 models/*.bin
 models/*/
 !models/.gitkeep
+!models/baseline_model.pkl
+!models/baseline_model_combined.pkl
+!models/baseline_model_combined_tf_teacher.pkl
 
 # Outputs
 outputs/*.csv
 outputs/*.json
 !outputs/.gitkeep
+!outputs/test*-pred.csv
+!outputs/test*-pred-tf-teacher.csv
 
 # Reports
 report/*.pdf
