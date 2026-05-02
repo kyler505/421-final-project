@@ -9,7 +9,7 @@ from typing import Sequence
 
 # Course / Gradescope submission CSV
 SUBMISSION_HEADER: tuple[str, str] = ("row_id", "prediction")
-PREDICT_BACKENDS: tuple[str, str] = ("baseline", "transformer")
+PREDICT_BACKENDS: tuple[str, str, str] = ("baseline", "transformer", "svm")
 ARTIFACT_KIND_BASELINE: str = "sklearn_pickle"
 ARTIFACT_KIND_TRANSFORMER: str = "huggingface_directory"
 
