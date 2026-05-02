@@ -23,7 +23,10 @@ This is a short chronological record of the main project actions we completed wh
 | 2026-04-30 (session) | Submitted transformer teacher pseudolabel job (`18478481`) | Produced 665k silver rows from 59,652 MIMIC-III notes — vastly better coverage. |
 | 2026-04-30 (session) | Retrained baseline + transformer on new silver data | Both models trained on gold + 665k transformer-teacher pseudolabels. |
 | 2026-04-30 (session) | Ran full four-way comparison on test01/02/03 | Compared old gold-only, old combined, new baseline, new transformer. |
-| 2026-04-30 (session) | Interpretation of four-way results | New models agree ~91% — training on same high-quality silver produces consistent predictions. Old combined was an outlier (over-permissive). New models are closer to gold. Transformer-teacher pseudolabeling worked. |
+| 2026-04-30 (session) | Interpretation of four-way results | New models agree ~91% — training on same high-quality silver produces consistent predictions. Old combined was an outlier (over-permissive). New models are closer to gold. |
+| 2026-05-02 (session) | Generated Gradescope submission predictions | Created `test*-pred.csv` (old combined) and `test*-pred-tf-teacher.csv` (new baseline) files for submission. |
+| 2026-05-02 (session) | Ran transformer inference on Grace for all test splits | Produced predictions: test01=39/79, test02=3944/7134, test03=79/168. Timed out before test03 finished; re-ran successfully. CSVs on Grace scratch. |
+| 2026-05-02 (session) | Updated `.gitignore` to allow model/shareable predictions | Teammates can now clone and run inference with baseline models directly. |
 
 ## Short takeaway
 
@@ -31,8 +34,9 @@ The repo now includes:
 
 - a reusable Grace transformer Slurm wrapper
 - this action log for teammate context
+- three baseline models shipped as `.pkl` files for teammates to test
+- Gradescope-ready prediction CSVs in `outputs/`
 - transformer-teacher pseudolabeling pipeline (665k silver rows)
-- full four-way model comparison results
 - documented conclusion: transformer-teacher pseudolabels produce better models; the classical baseline trained on them is the safest deliverable
 
 ## Key numbers

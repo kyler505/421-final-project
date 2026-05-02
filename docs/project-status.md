@@ -28,6 +28,42 @@ Local and Grace checks completed:
   - `test03_text_only.csv`
 - ClinicalBERT transformer training on Grace (`COMPLETED`, exit `0:0`)
 - transformer inference/evaluation on Grace (`COMPLETED`, exit `0:0`)
+- pseudolabeling with baseline teacher — 7,620 silver rows
+- pseudolabeling with transformer teacher — 665k silver rows
+- retrained both baseline and transformer on gold + transformer-teacher silver
+- four-way model comparison on all three test splits
+
+## Available models
+
+Three baseline models shipped in `models/`:
+
+| Model | File | Trained on | Positives (test01/test02/test03) |
+|---|---|---|---|
+| Gold-only | `baseline_model.pkl` | 20 gold rows | 37 / 3911 / 57 |
+| Old Combined | `baseline_model_combined.pkl` | gold + 7,620 baseline-teacher silver | 53 / 5739 / 161 |
+| New Baseline (recommended) | `baseline_model_combined_tf_teacher.pkl` | gold + 665k transformer-teacher silver | 40 / 3870 / 75 |
+
+Also tested but not shipped in repo:
+- **New Transformer** (on Grace scratch) — trained on gold + 665k transformer-teacher silver — 39 / 3944 / 79
+
+## Running predictions
+
+Teammates can generate predictions with any model:
+
+```bash
+python -m src.predict \
+  --mode baseline \
+  --model models/baseline_model_combined_tf_teacher.pkl \
+  --input data/raw/test01_text_only.csv \
+  --output outputs/my_preds.csv
+```
+
+## Comparison summary
+
+- New Baseline vs New Transformer: ~91% agreement
+- New models are closer to gold-only than old combined was
+- Old combined (baseline teacher) was over-permissive
+- Transformer teacher pseudolabels were significantly better than baseline teacher
 
 ## Current baseline observations
 
