@@ -156,7 +156,8 @@ def test_load_training_manifest(tmp_path) -> None:
 
 
 def test_cv_baseline_stratified_runs() -> None:
-    from src.eval_cv import cv_baseline_stratified
+    from src.eval_cv import cv_model_stratified
+    from src.models.baseline import BaselineModel
 
     texts = [
         "patient has pneumonia",
@@ -169,7 +170,10 @@ def test_cv_baseline_stratified_runs() -> None:
         "denies chest pain",
     ]
     labels = [1, 0, 1, 0, 1, 0, 1, 0]
-    folds, means = cv_baseline_stratified(texts, labels, n_splits=4, random_state=0)
+    folds, means = cv_model_stratified(
+        texts, labels, n_splits=4, random_state=0,
+        model_factory=lambda: BaselineModel(),
+    )
     assert len(folds) == 4
     assert "f1" in means
 

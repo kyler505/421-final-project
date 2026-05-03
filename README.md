@@ -17,23 +17,28 @@ csce421-final-project/
 ├── scripts/
 │   ├── pseudolabel_mimic.py  # MIMIC-III pseudolabel generator (self-training)
 │   ├── run_pseudolabel_slurm.sh  # Slurm submission script for Grace HPRC
+│   ├── run_pseudolabel_transformer_teacher.sbatch  # ClinicalBERT teacher pseudolabeling
+│   ├── run_svm_slurm.sh  # SVM Slurm submission
+│   ├── run_svm_eval_slurm.sh  # SVM eval Slurm submission
+│   ├── run_transformer_slurm.sh  # Transformer training Slurm script
 │   └── freeze_requirements.ps1
 ├── src/
-│   ├── __init__.py
 │   ├── config.py
+│   ├── contracts.py
 │   ├── data.py
+│   ├── eval_cv.py           # Stratified cross-validation (model-agnostic)
+│   ├── eval_metrics.py
+│   ├── evaluate.py
+│   ├── manifest.py
 │   ├── predict.py
 │   ├── run_eval.py
-│   ├── train_baseline.py
+│   ├── train_baseline.py    # TF-IDF + LogisticRegression
+│   ├── train_svm.py         # TF-IDF + SVM
 │   ├── train_transformer.py
-│   ├── contracts.py
-│   ├── manifest.py
-│   ├── eval_metrics.py
-│   ├── eval_cv.py
 │   ├── utils.py
 │   └── models/
-│       ├── __init__.py
 │       ├── baseline.py
+│       ├── svm.py
 │       └── transformer.py
 ├── tests/
 │   └── test_smoke.py
@@ -135,6 +140,53 @@ python -m src.predict \
   --output outputs/test01-pred.csv \
   --debug-output outputs/test01-debug.csv \
   --probabilities
+```
+
+### Train SVM
+
+```bash
+python -m src.train_svm \
+  --train data/raw/train.csv \
+  --output models/svm_model.pkl
+```
+
+Or with a training manifest (multi-shard gold + silver):
+
+```bash
+python -m src.train_svm \
+  --train-manifest data/processed/combined_manifest.json \
+  --output models/svm_model_combined.pkl
+```
+
+### Predict with SVM
+
+```bash
+python -m src.predict \
+  --mode svm \
+  --model models/svm_model.pkl \
+  --input data/raw/test01_text_only.csv \
+  --output outputs/test01-pred-svm.csv
+```
+
+### Evaluate with stratified CV (any classifier)
+
+The `eval_cv` module supports model-agnostic stratified cross-validation. Pass a `model_factory` callable:
+
+```bash
+python -c "
+from src.eval_cv import cv_model_stratified
+from src.data import load_train_data, get_texts_labels
+from src.models.svm import SVMModel
+
+df = load_train_data('data/raw/train.csv')
+texts, labels = get_texts_labels(df)
+
+folds, means = cv_model_stratified(
+    texts, labels, n_splits=5, random_state=42,
+    model_factory=lambda: SVMModel(),
+)
+print(means)
+"
 ```
 
 ### Train transformer scaffold
