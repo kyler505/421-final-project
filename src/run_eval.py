@@ -27,6 +27,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--folds", type=int, default=5, help="Number of CV folds (<= n_samples)")
     parser.add_argument("--random-state", type=int, default=42, dest="random_state")
     parser.add_argument("--output", default=None, help="Optional JSON path for fold metrics + means")
+    parser.add_argument("--augment-manifest", dest="augment_manifest", help="Optional manifest for extra training data (silver)")
     parser.add_argument("--max-features", type=int, default=None, dest="max_features")
     parser.add_argument("--ngram-range", type=int, nargs=2, default=None, dest="ngram_range")
     return parser.parse_args()
@@ -49,6 +50,13 @@ def main() -> None:
 
     texts, labels = get_texts_labels(train_df)
     n_samples = len(texts)
+
+    extra_texts, extra_labels = None, None
+    if args.augment_manifest:
+        augment_df = load_training_manifest(Path(args.augment_manifest))
+        extra_texts, extra_labels = get_texts_labels(augment_df)
+        print(f"Augmenting training with {len(extra_texts)} samples from {args.augment_manifest}")
+
     if args.folds > n_samples:
         print(f"Error: folds ({args.folds}) > n_samples ({n_samples})", file=sys.stderr)
         sys.exit(1)
@@ -84,6 +92,8 @@ def main() -> None:
         n_splits=args.folds,
         random_state=args.random_state,
         model_factory=factory,
+        extra_train_texts=extra_texts,
+        extra_train_labels=extra_labels,
     )
 
     print(f"CV source: {source} (mode: {args.mode})")

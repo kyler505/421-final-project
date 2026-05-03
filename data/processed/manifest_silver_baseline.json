@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "path": "pseudolabels.csv",
+      "label_source": "silver",
+      "split": "baseline_teacher_pseudolabels"
+    }
+  ],
+  "notes": "Silver-only manifest for Baseline Teacher"
+}

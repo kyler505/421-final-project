@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "path": "pseudolabels_transformer_teacher.csv",
+      "label_source": "silver",
+      "split": "transformer_teacher_pseudolabels"
+    }
+  ],
+  "notes": "Silver-only manifest for Transformer Teacher"
+}

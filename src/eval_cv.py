@@ -17,6 +17,8 @@ def cv_model_stratified(
     n_splits: int,
     random_state: int = 42,
     model_factory: Callable[[], any] | None = None,
+    extra_train_texts: Sequence[str] | None = None,
+    extra_train_labels: Sequence[int] | None = None,
 ) -> tuple[list[dict[str, float | int]], dict[str, float]]:
     """Fit a fresh model per fold; return per-fold metrics and means."""
     text_list = list(texts)
@@ -32,6 +34,10 @@ def cv_model_stratified(
         train_labels = [label_list[i] for i in train_idx]
         val_texts = [text_list[i] for i in val_idx]
         val_labels = [label_list[i] for i in val_idx]
+
+        if extra_train_texts is not None and extra_train_labels is not None:
+            train_texts.extend(extra_train_texts)
+            train_labels.extend(extra_train_labels)
 
         model = model_factory()
         model.fit(train_texts, train_labels)
