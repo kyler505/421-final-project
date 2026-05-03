@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "path": "../raw/train_data-text_and_labels.csv",
+      "label_source": "gold",
+      "split": "course_labeled"
+    },
+    {
+      "path": "pseudolabels_transformer_teacher.csv",
+      "label_source": "silver",
+      "split": "transformer_teacher_pseudolabels"
+    }
+  ],
+  "notes": "Scenario 2: Transformer-Teacher (New) - Gold + ClinicalBERT Pseudolabels"
+}

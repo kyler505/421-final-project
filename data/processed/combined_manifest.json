@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "path": "../raw/train_data-text_and_labels.csv",
+      "label_source": "gold",
+      "split": "course_labeled"
+    },
+    {
+      "path": "pseudolabels.csv",
+      "label_source": "silver",
+      "split": "baseline_teacher_pseudolabels"
+    }
+  ],
+  "notes": "Scenario 1: Baseline-Teacher (Old) - Gold + Baseline Pseudolabels"
+}
