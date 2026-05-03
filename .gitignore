@@ -42,6 +42,8 @@ data/raw/*.csv
 data/processed/*.csv
 !data/raw/.gitkeep
 !data/processed/.gitkeep
+!data/processed/manifest.json
+!data/processed/pseudolabels.csv
 
 # Models
 models/*.pkl
