@@ -30,24 +30,22 @@ Local and Grace checks completed:
 - transformer inference/evaluation on Grace (`COMPLETED`, exit `0:0`)
 - pseudolabeling with baseline teacher — 7,620 silver rows
 - pseudolabeling with transformer teacher — 665k silver rows
-- retrained both baseline and transformer on gold + transformer-teacher silver
-- four-way model comparison on all three test splits
+- retrained the baseline model on gold + transformer-teacher silver
+- ran the baseline-teacher / transformer / SVM comparison pass on all three test splits
 - regenerated the missing baseline-teacher SVM predictions locally and populated the `421 Project Results` Google Sheet
 
 ## Available models
 
-Five models now ship in `models/`:
+Five model artifacts now ship in `models/`, plus one transformer comparison run on Grace scratch:
 
 | Model | File | Trained on | Positives (test01/test02/test03) |
 |---|---|---|---|
 | Gold-only | `baseline_model.pkl` | 20 gold rows | 37 / 3911 / 57 |
-| Old Combined | `baseline_model_combined.pkl` | gold + 7,620 baseline-teacher silver | 53 / 5739 / 161 |
+| Old Combined | `baseline_model_combined.pkl` | gold + 7,620 baseline-teacher silver | 54 / 5742 / 161 |
 | New Baseline (recommended) | `baseline_model_combined_tf_teacher.pkl` | gold + 665k transformer-teacher silver | 40 / 3870 / 75 |
 | SVM comparison model | `svm_model_transformer_teacher.pkl` | gold + 665k transformer-teacher silver | 40 / 3905 / 81 |
 | SVM (baseline teacher) | `svm_model_baseline_teacher.pkl` | gold + 7,620 baseline-teacher silver | 40 / 3905 / 81 |
-
-Also tested but not shipped in repo:
-- **New Transformer** (on Grace scratch) — trained on gold + 665k transformer-teacher silver — 39 / 3944 / 79
+| New Transformer (Grace scratch) | `transformer_clinicalbert_combined` | gold + 665k transformer-teacher silver | 44 / 4065 / 112 |
 
 ## Running predictions
 
@@ -63,9 +61,9 @@ python -m src.predict \
 
 ## Comparison summary
 
-- New Baseline vs New Transformer: ~91% agreement
-- SVM vs New Baseline: ~95% / 98% / 94% agreement on test01/test02/test03
-- New models are closer to gold-only than old combined was
+- New baseline vs. new transformer: ~90% agreement on test01/test02, but test03 diverged more
+- SVM comparison stays very close to the new baseline and does not change the submit choice
+- New baseline is still the safest ship candidate; the transformer is the experimental comparison model
 - Old combined (baseline teacher) was over-permissive
 - Transformer teacher pseudolabels were significantly better than baseline teacher
 

@@ -23,11 +23,11 @@ This is a short chronological record of the main project actions we completed wh
 | 2026-04-30 (session) | Submitted transformer teacher pseudolabel job (`18478481`) | Produced 665k silver rows from 59,652 MIMIC-III notes — vastly better coverage. |
 | 2026-04-30 (session) | Retrained baseline + transformer on new silver data | Both models trained on gold + 665k transformer-teacher pseudolabels. |
 | 2026-04-30 (session) | Ran full four-way comparison on test01/02/03 | Compared old gold-only, old combined, new baseline, new transformer. |
-| 2026-04-30 (session) | Interpretation of four-way results | New models agree ~91% — training on same high-quality silver produces consistent predictions. Old combined was an outlier (over-permissive). New models are closer to gold. |
-| 2026-05-02 (session) | Generated Gradescope submission predictions | Created `test*-pred.csv` and `test*-pred-tf-teacher.csv` (new baseline variants) alongside the old combined baseline CSVs for comparison. |
-| 2026-05-02 (session) | Ran transformer inference on Grace for all test splits | Produced predictions: test01=39/79, test02=3944/7134, test03=79/168. Timed out before test03 finished; re-ran successfully. CSVs on Grace scratch. |
-| 2026-05-02 (session) | Updated `.gitignore` to allow model/shareable predictions | Teammates can now clone and run inference with baseline models directly. |
-| 2026-05-03 (session) | Pulled the remaining Grace artifacts into the local repo, regenerated the missing baseline-teacher SVM predictions, and populated the results sheet | Added the missing SVM prediction CSVs plus the run manifests, then laid out the model/results matrix in the work Google Sheet `421 Project Results`. |
+    26|| 2026-05-03 (session) | Finalized six-model comparison and submission decision | Updated the planning doc and results sheet with the current baseline / transformer / SVM comparison matrix; new baseline remains the submit candidate, transformer stays experimental. |
+    27|| 2026-05-02 (session) | Generated Gradescope submission predictions | Created `test*-pred.csv` and `test*-pred-tf-teacher.csv` (new baseline variants) alongside the old combined baseline CSVs for comparison. |
+    28|| 2026-05-02 (session) | Ran transformer inference on Grace for all test splits | Produced predictions: test01=39/79, test02=3944/7134, test03=79/168. Timed out before test03 finished; re-ran successfully. CSVs on Grace scratch. |
+    29|| 2026-05-02 (session) | Updated `.gitignore` to allow model/shareable predictions | Teammates can now clone and run inference with baseline models directly. |
+    30|| 2026-05-03 (session) | Pulled the remaining Grace artifacts into the local repo, regenerated the missing baseline-teacher SVM predictions, and populated the results sheet | Added the missing SVM prediction CSVs plus the run manifests, then laid out the model/results matrix in the work Google Sheet `421 Project Results`. |
 
 ## Short takeaway
 
@@ -35,10 +35,10 @@ The repo now includes:
 
 - a reusable Grace transformer Slurm wrapper
 - this action log for teammate context
-- five model artifacts shipped as `.pkl` files for teammates to test
-- Gradescope-ready prediction CSVs in `outputs/` for gold baseline, baseline-teacher, and transformer-teacher comparisons
+- five model artifacts shipped as `.pkl` files plus one transformer comparison run on Grace scratch
+- Gradescope-ready prediction CSVs in `outputs/` for gold baseline, baseline-teacher, transformer-teacher, and ClinicalBERT comparisons
 - transformer-teacher pseudolabeling pipeline (665k silver rows)
-- documented conclusion: transformer-teacher pseudolabels produce better models; the classical baseline trained on them is the safest deliverable
+- documented conclusion: the new baseline is the safest deliverable; the transformer stays experimental
 - Google Sheet `421 Project Results` now mirrors the organized results matrix
 
 ## Key numbers
@@ -47,6 +47,6 @@ The repo now includes:
 | --- | --- |
 | Baseline teacher silver rows | 7,620 |
 | Transformer teacher silver rows | 665k |
-| New Baseline vs New Transformer agreement | ~91% |
-| New models vs Gold-only agreement (test02) | ~70% |
-| Old Combined vs Gold-only agreement (test02) | ~72% |
+|| New baseline vs new transformer agreement | ~90% on test01/test02; ~61% on test03 |
+|| SVM comparison vs new baseline agreement | ~95% / 98% / 94% |
+|| Old combined vs gold-only agreement (test02) | ~72% |
