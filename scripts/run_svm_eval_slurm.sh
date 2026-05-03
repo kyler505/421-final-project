@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=svm-eval
-#SBATCH --output=/scratch/user/kevin.nguyen/csce421/final_project/421-final-project/logs/svm_eval_%j.out
-#SBATCH --error=/scratch/user/kevin.nguyen/csce421/final_project/421-final-project/logs/svm_eval_%j.err
+#SBATCH --output=logs/svm_eval_%j.out
+#SBATCH --error=logs/svm_eval_%j.err
 #SBATCH --time=01:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
@@ -15,7 +15,7 @@ source $(conda info --base)/etc/profile.d/conda.sh
 conda activate final
 PYTHON_BIN=$(which python)
 
-mkdir -p /scratch/user/kevin.nguyen/csce421/final_project/421-final-project/logs
+mkdir -p "${PROJECT_ROOT}/logs"
 
 export PYTHONUNBUFFERED=1
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"

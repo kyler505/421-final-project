@@ -8,7 +8,7 @@ from typing import Sequence
 
 import numpy as np
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.svm import SVC
+from sklearn.svm import LinearSVC
 from sklearn.pipeline import Pipeline
 
 
@@ -38,12 +38,11 @@ class SVMModel:
                 ),
                 (
                     "clf",
-                    SVC(
-                        kernel="linear",
+                    LinearSVC(
                         C=c,
                         class_weight="balanced",
-                        probability=True,
                         random_state=42,
+                        dual=False,
                     ),
                 ),
             ]
@@ -63,7 +62,13 @@ class SVMModel:
     def predict_proba(self, texts: Sequence[str]) -> np.ndarray:
         if not self._is_fitted:
             raise RuntimeError("Model must be fitted before prediction")
-        return self.pipeline.predict_proba(list(texts))
+        scores = self.pipeline.decision_function(list(texts))
+        scores = np.asarray(scores, dtype=float)
+        if scores.ndim == 1:
+            probs_pos = 1.0 / (1.0 + np.exp(-scores))
+            probs_neg = 1.0 - probs_pos
+            return np.column_stack([probs_neg, probs_pos])
+        return scores
 
     def save(self, path: str | Path) -> None:
         path = Path(path)

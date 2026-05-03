@@ -57,7 +57,7 @@ def main() -> None:
         ngram_range=tuple(args.ngram_range) if args.ngram_range else config.ngram_range,
         min_df=config.min_df,
         max_df=config.max_df,
-        c=config.logistic_c,
+        c=config.svm_c,
     )
     model.fit(texts, labels)
 
@@ -85,7 +85,7 @@ def main() -> None:
         hyperparams={
             "max_features": args.max_features or config.max_features,
             "ngram_range": list(args.ngram_range) if args.ngram_range else list(config.ngram_range),
-            "svm_c": config.logistic_c,
+            "svm_c": config.svm_c,
         },
     )
     save_run_manifest(run_manifest, manifest_out)

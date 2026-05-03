@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "created_utc": "2026-04-30T07:27:40.841086+00:00",
+  "python_version": "3.12.13",
+  "platform": "Linux-4.18.0-553.109.1.el8_10.x86_64-x86_64-with-glibc2.28",
+  "sklearn_version": "1.8.0",
+  "torch_version": "2.11.0+cu130",
+  "transformers_version": "5.7.0",
+  "backend": "baseline",
+  "artifact_kind": "sklearn_pickle",
+  "pretrained_source": "tfidf+logistic",
+  "checkpoint_dir": "/home/kcao/projects/csce421-final-project/models/baseline_model_combined_tf_teacher.pkl",
+  "train_path": "/home/kcao/projects/csce421-final-project/data/processed/manifest.json",
+  "max_length": null,
+  "truncation_policy": "ngram_sklearn",
+  "random_state": 42,
+  "hyperparams": {
+    "max_features": 5000,
+    "ngram_range": [
+      1,
+      2
+    ],
+    "logistic_c": 1.0
+  }
+}

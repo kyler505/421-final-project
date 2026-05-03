@@ -28,6 +28,7 @@ class Config:
     min_df: int = 1
     max_df: float = 1.0
     logistic_c: float = 1.0
+    svm_c: float = 1.0
 
     model_name: str = "emilyalsentzer/Bio_ClinicalBERT"
     max_length: int = 128

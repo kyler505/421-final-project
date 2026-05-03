@@ -19,6 +19,14 @@ def test_data_imports() -> None:
     assert data is not None
 
 
+def test_config_exposes_svm_c() -> None:
+    from src.config import get_config
+
+    config = get_config()
+    assert hasattr(config, "svm_c")
+    assert config.svm_c > 0
+
+
 def test_utils_imports() -> None:
     from src import utils
 

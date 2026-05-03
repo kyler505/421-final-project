@@ -32,16 +32,19 @@ Local and Grace checks completed:
 - pseudolabeling with transformer teacher — 665k silver rows
 - retrained both baseline and transformer on gold + transformer-teacher silver
 - four-way model comparison on all three test splits
+- regenerated the missing baseline-teacher SVM predictions locally and populated the `421 Project Results` Google Sheet
 
 ## Available models
 
-Three baseline models shipped in `models/`:
+Five models now ship in `models/`:
 
 | Model | File | Trained on | Positives (test01/test02/test03) |
 |---|---|---|---|
 | Gold-only | `baseline_model.pkl` | 20 gold rows | 37 / 3911 / 57 |
 | Old Combined | `baseline_model_combined.pkl` | gold + 7,620 baseline-teacher silver | 53 / 5739 / 161 |
 | New Baseline (recommended) | `baseline_model_combined_tf_teacher.pkl` | gold + 665k transformer-teacher silver | 40 / 3870 / 75 |
+| SVM comparison model | `svm_model_transformer_teacher.pkl` | gold + 665k transformer-teacher silver | 40 / 3905 / 81 |
+| SVM (baseline teacher) | `svm_model_baseline_teacher.pkl` | gold + 7,620 baseline-teacher silver | 40 / 3905 / 81 |
 
 Also tested but not shipped in repo:
 - **New Transformer** (on Grace scratch) — trained on gold + 665k transformer-teacher silver — 39 / 3944 / 79
@@ -61,6 +64,7 @@ python -m src.predict \
 ## Comparison summary
 
 - New Baseline vs New Transformer: ~91% agreement
+- SVM vs New Baseline: ~95% / 98% / 94% agreement on test01/test02/test03
 - New models are closer to gold-only than old combined was
 - Old combined (baseline teacher) was over-permissive
 - Transformer teacher pseudolabels were significantly better than baseline teacher

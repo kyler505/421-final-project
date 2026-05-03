@@ -73,7 +73,7 @@ def main() -> None:
                 ngram_range=ngram,
                 min_df=config.min_df,
                 max_df=config.max_df,
-                c=config.logistic_c,
+                c=config.svm_c,
             )
     else:
         raise ValueError(f"Unsupported mode: {args.mode}")
