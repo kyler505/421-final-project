@@ -22,7 +22,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mode",
         "--backend",
-        choices=["baseline", "transformer"],
+        choices=["baseline", "transformer", "svm"],
         required=True,
         dest="backend",
         help="Model backend (alias: --backend). Public contract: only these values are supported.",
@@ -66,6 +66,13 @@ def main() -> None:
 
     if args.backend == "baseline":
         model = BaselineModel.load(model_path)
+        predictions = model.predict(texts)
+        if args.probabilities:
+            probs = model.predict_proba(texts)[:, 1].tolist()
+        artifact_kind = ARTIFACT_KIND_BASELINE
+    elif args.backend == "svm":
+        from src.models.svm import SVMModel
+        model = SVMModel.load(model_path)
         predictions = model.predict(texts)
         if args.probabilities:
             probs = model.predict_proba(texts)[:, 1].tolist()

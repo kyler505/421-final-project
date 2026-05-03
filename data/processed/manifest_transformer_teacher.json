@@ -2,18 +2,15 @@
   "version": 1,
   "entries": [
     {
-      "path": "../raw/train.csv",
-      "label_source": "gold_human",
-      "split": "gold_train"
+      "path": "../raw/train_data-text_and_labels.csv",
+      "label_source": "gold",
+      "split": "course_labeled"
     },
     {
       "path": "pseudolabels_transformer_teacher.csv",
-      "label_source": "silver_pseudolabel_conf_0.90_transformer_teacher",
-      "split": "silver_train"
+      "label_source": "silver",
+      "split": "transformer_teacher_pseudolabels"
     }
   ],
-  "teacher_mode": "transformer",
-  "teacher_model": "../models/baseline_model_combined_tf_teacher.pkl",
-  "total_rows": 665603,
-  "notes": "Combined manifest: gold (20) + ClinicalBERT transformer-teacher silver (665583) — generated on Grace Apr 30"
+  "notes": "Scenario 2: Transformer-Teacher (New) - Gold + ClinicalBERT Pseudolabels"
 }

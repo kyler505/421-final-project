@@ -3,18 +3,14 @@
   "entries": [
     {
       "path": "../raw/train_data-text_and_labels.csv",
-      "label_source": "gold_human",
-      "split": "gold_train"
+      "label_source": "gold",
+      "split": "course_labeled"
     },
     {
       "path": "pseudolabels.csv",
-      "label_source": "silver_pseudolabel_conf_0.90",
-      "split": "silver_train"
+      "label_source": "silver",
+      "split": "baseline_teacher_pseudolabels"
     }
   ],
-  "baseline_model": "../../models/baseline_model.pkl",
-  "teacher_mode": "baseline",
-  "teacher_model": "../../models/baseline_model.pkl",
-  "total_rows": 7640,
-  "notes": "Created locally from existing pseudolabels + gold data for combined baseline retraining"
+  "notes": "Scenario 1: Baseline-Teacher (Old) - Gold + Baseline Pseudolabels"
 }
