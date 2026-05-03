@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="/scratch/user/kcao/.conda/envs/tempdata/bin/python"
 TRAIN_MANIFEST="${PROJECT_ROOT}/data/processed/combined_manifest.json"
 MODEL_NAME="/scratch/user/kcao/csce421-final-project/models/pretrained/Bio_ClinicalBERT"

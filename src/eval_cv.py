@@ -11,17 +11,19 @@ from src.eval_metrics import binary_classification_metrics
 from src.models.baseline import BaselineModel
 
 
-def cv_baseline_stratified(
+def cv_model_stratified(
     texts: Sequence[str],
     labels: Sequence[int],
     n_splits: int,
     random_state: int = 42,
-    baseline_factory: Callable[[], BaselineModel] | None = None,
+    model_factory: Callable[[], any] | None = None,
 ) -> tuple[list[dict[str, float | int]], dict[str, float]]:
-    """Fit a fresh baseline per fold; return per-fold metrics and means."""
+    """Fit a fresh model per fold; return per-fold metrics and means."""
     text_list = list(texts)
     label_list = [int(x) for x in labels]
-    factory = baseline_factory or BaselineModel
+    # We don't hardcode BaselineModel here anymore
+    if model_factory is None:
+        raise ValueError("model_factory must be provided")
 
     skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
     fold_rows: list[dict[str, float | int]] = []
@@ -31,7 +33,7 @@ def cv_baseline_stratified(
         val_texts = [text_list[i] for i in val_idx]
         val_labels = [label_list[i] for i in val_idx]
 
-        model = factory()
+        model = model_factory()
         model.fit(train_texts, train_labels)
         preds = model.predict(val_texts)
         metrics = binary_classification_metrics(val_labels, preds)

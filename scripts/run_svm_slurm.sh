@@ -1,19 +1,21 @@
 #!/bin/bash
 #SBATCH --job-name=svm-train
-#SBATCH --output=/scratch/user/kcao/csce421-final-project/logs/svm_train_%j.out
-#SBATCH --error=/scratch/user/kcao/csce421-final-project/logs/svm_train_%j.err
+#SBATCH --output=/scratch/user/kevin.nguyen/csce421/final_project/421-final-project/logs/svm_train_%j.out
+#SBATCH --error=/scratch/user/kevin.nguyen/csce421/final_project/421-final-project/logs/svm_train_%j.err
 #SBATCH --time=02:00:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --partition=normal
+#SBATCH --chdir=.
 
 set -euo pipefail
 
-PROJECT_ROOT="${SLURM_SUBMIT_DIR:-$(cd "$(dirname "$0")/.." && pwd)}"
-PYTHON_BIN="/scratch/user/kcao/.conda/envs/tempdata/bin/python"
+PROJECT_ROOT="${SLURM_SUBMIT_DIR}"
+source $(conda info --base)/etc/profile.d/conda.sh
+conda activate final
+PYTHON_BIN=$(which python)
 
-mkdir -p /scratch/user/kcao/csce421-final-project/logs
+mkdir -p /scratch/user/kevin.nguyen/csce421/final_project/421-final-project/logs
 
 export PYTHONUNBUFFERED=1
 export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
@@ -42,20 +44,5 @@ echo "Training SVM using manifest: ${TRAIN_MANIFEST}"
   --train-manifest "${TRAIN_MANIFEST}" \
   --output "${OUTPUT_MODEL}" \
   --manifest "${MANIFEST_OUT}"
-
-echo "----------------------------------------"
-
-# Evaluation step (requires a labeled test set)
-TEST_CSV="${TEST_CSV:-${PROJECT_ROOT}/data/processed/test_gold.csv}"
-
-if [[ -f "${TEST_CSV}" ]]; then
-  echo "Evaluating model on ${TEST_CSV}..."
-  "${PYTHON_BIN}" "${PROJECT_ROOT}/src/evaluate.py" \
-      --model "${OUTPUT_MODEL}" \
-      --input "${TEST_CSV}" \
-      --mode svm
-else
-  echo "Notice: Labeled test set not found at ${TEST_CSV}. Skipping evaluation."
-fi
 
 echo "Completed at $(date)"

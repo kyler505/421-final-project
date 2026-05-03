@@ -9,15 +9,21 @@ from pathlib import Path
 
 from src.config import get_config
 from src.data import get_texts_labels, load_train_data, load_training_manifest
-from src.eval_cv import cv_baseline_stratified
+from src.eval_cv import cv_model_stratified
 from src.models.baseline import BaselineModel
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Evaluate baseline with stratified K-fold CV")
+    parser = argparse.ArgumentParser(description="Evaluate a model with stratified K-fold CV")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--train", help="Single labeled training CSV")
     group.add_argument("--train-manifest", dest="train_manifest", help="Training manifest JSON (multi-shard)")
+    parser.add_argument(
+        "--mode",
+        choices=["baseline", "svm"],
+        default="baseline",
+        help="Model backend to evaluate",
+    )
     parser.add_argument("--folds", type=int, default=5, help="Number of CV folds (<= n_samples)")
     parser.add_argument("--random-state", type=int, default=42, dest="random_state")
     parser.add_argument("--output", default=None, help="Optional JSON path for fold metrics + means")
@@ -50,24 +56,37 @@ def main() -> None:
     ngram = tuple(args.ngram_range) if args.ngram_range else config.ngram_range
     max_feat = args.max_features or config.max_features
 
-    def factory() -> BaselineModel:
-        return BaselineModel(
-            max_features=max_feat,
-            ngram_range=ngram,
-            min_df=config.min_df,
-            max_df=config.max_df,
-            c=config.logistic_c,
-        )
+    if args.mode == "baseline":
+        def factory() -> BaselineModel:
+            return BaselineModel(
+                max_features=max_feat,
+                ngram_range=ngram,
+                min_df=config.min_df,
+                max_df=config.max_df,
+                c=config.logistic_c,
+            )
+    elif args.mode == "svm":
+        from src.models.svm import SVMModel
+        def factory() -> SVMModel:
+            return SVMModel(
+                max_features=max_feat,
+                ngram_range=ngram,
+                min_df=config.min_df,
+                max_df=config.max_df,
+                c=config.logistic_c,
+            )
+    else:
+        raise ValueError(f"Unsupported mode: {args.mode}")
 
-    fold_rows, means = cv_baseline_stratified(
+    fold_rows, means = cv_model_stratified(
         texts,
         labels,
         n_splits=args.folds,
         random_state=args.random_state,
-        baseline_factory=factory,
+        model_factory=factory,
     )
 
-    print(f"CV source: {source}")
+    print(f"CV source: {source} (mode: {args.mode})")
     for row in fold_rows:
         fold = int(row["fold"])
         parts = {k: row[k] for k in ("accuracy", "f1", "precision", "recall")}
