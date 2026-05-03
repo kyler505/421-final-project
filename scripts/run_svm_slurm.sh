@@ -21,7 +21,7 @@ export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 echo "Starting SVM training at $(date)"
 
 # Train on old manifest
-TRAIN_MANIFEST_OLD="${PROJECT_ROOT}/data/processed/old_manifest.json"
+TRAIN_MANIFEST_OLD="${PROJECT_ROOT}/data/processed/combined_manifest.json"
 OUTPUT_MODEL_OLD="${PROJECT_ROOT}/models/svm_old.pkl"
 MANIFEST_OUT_OLD="${PROJECT_ROOT}/models/svm_old_run_manifest.json"
 
@@ -38,7 +38,7 @@ fi
 echo "----------------------------------------"
 
 # Train on new combined manifest
-TRAIN_MANIFEST_NEW="${PROJECT_ROOT}/data/processed/manifest.json"
+TRAIN_MANIFEST_NEW="${PROJECT_ROOT}/data/processed/manifest_transformer_teacher.json"
 OUTPUT_MODEL_NEW="${PROJECT_ROOT}/models/svm_combined.pkl"
 MANIFEST_OUT_NEW="${PROJECT_ROOT}/models/svm_combined_run_manifest.json"
 
