@@ -29,9 +29,11 @@ def parse_args() -> argparse.Namespace:
         help="Use sublinear TF scaling in TF-IDF (default: enabled)",
     )
     parser.add_argument(
-        "--manifest",
-        default=None,
-        help="Optional path for run manifest JSON (default: next to model as <name>_run_manifest.json)",
+        "--upsample-gold",
+        dest="upsample_gold",
+        type=int,
+        default=1,
+        help="Repeat gold samples N times (default: 1)",
     )
     return parser.parse_args()
 
@@ -45,7 +47,7 @@ def main() -> None:
         if not manifest_path.exists():
             print(f"Error: manifest not found: {manifest_path}", file=sys.stderr)
             sys.exit(1)
-        train_df = load_training_manifest(manifest_path)
+        train_df = load_training_manifest(manifest_path, upsample_gold=args.upsample_gold)
         train_source = str(manifest_path.resolve())
     else:
         train_path = Path(args.train)

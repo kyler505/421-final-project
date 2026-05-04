@@ -32,7 +32,7 @@ class Config:
 
     model_name: str = "emilyalsentzer/Bio_ClinicalBERT"
     max_length: int = 128
-    batch_size: int = 8
+    batch_size: int = 16
     learning_rate: float = 2e-5
     epochs: int = 3
     warmup_steps: int = 0

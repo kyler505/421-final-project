@@ -39,6 +39,12 @@ def parse_args() -> argparse.Namespace:
         help="Optional debug CSV path with row_id,text,prediction[,probability]",
     )
     parser.add_argument(
+        "--threshold",
+        type=float,
+        default=0.5,
+        help="Decision threshold for positive class (default: 0.5)",
+    )
+    parser.add_argument(
         "--write-manifest",
         default=None,
         help="Optional path to write a JSON run manifest for this inference run",
@@ -66,16 +72,22 @@ def main() -> None:
 
     if args.backend == "baseline":
         model = BaselineModel.load(model_path)
-        predictions = model.predict(texts)
-        if args.probabilities:
-            probs = model.predict_proba(texts)[:, 1].tolist()
+        probs_array = model.predict_proba(texts)
+        probs = probs_array[:, 1].tolist()
+        if args.threshold != 0.5:
+            predictions = (probs_array[:, 1] >= args.threshold).astype(int)
+        else:
+            predictions = model.predict(texts)
         artifact_kind = ARTIFACT_KIND_BASELINE
     elif args.backend == "svm":
         from src.models.svm import SVMModel
         model = SVMModel.load(model_path)
-        predictions = model.predict(texts)
-        if args.probabilities:
-            probs = model.predict_proba(texts)[:, 1].tolist()
+        probs_array = model.predict_proba(texts)
+        probs = probs_array[:, 1].tolist()
+        if args.threshold != 0.5:
+            predictions = (probs_array[:, 1] >= args.threshold).astype(int)
+        else:
+            predictions = model.predict(texts)
         artifact_kind = ARTIFACT_KIND_BASELINE
     else:
         from src.models.transformer import TransformerClassifier
@@ -84,9 +96,12 @@ def main() -> None:
             model_name=str(model_path),
             max_length=args.max_length or config.max_length,
         )
-        predictions = model.predict(texts)
-        if args.probabilities:
-            probs = model.predict_proba(texts)[:, 1].tolist()
+        probs_array = model.predict_proba(texts)
+        probs = probs_array[:, 1].tolist()
+        if args.threshold != 0.5:
+            predictions = (probs_array[:, 1] >= args.threshold).astype(int)
+        else:
+            predictions = model.predict(texts)
         artifact_kind = ARTIFACT_KIND_TRANSFORMER
 
     output_path = Path(args.output) if args.output else config.predictions_path

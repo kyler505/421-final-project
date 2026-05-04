@@ -115,7 +115,9 @@ def get_row_ids(df: pd.DataFrame) -> list[int]:
     return df["row_id"].tolist()
 
 
-def load_training_manifest(path: str | Path, config: Config | None = None) -> pd.DataFrame:
+def load_training_manifest(
+    path: str | Path, config: Config | None = None, upsample_gold: int = 1
+) -> pd.DataFrame:
     """Load and concatenate labeled shards described by a JSON manifest.
 
     Manifest schema: see docs/data/data-manifest-schema.md. Each entry must point to a
@@ -145,8 +147,14 @@ def load_training_manifest(path: str | Path, config: Config | None = None) -> pd
 
         df = load_train_data(csv_path, config=config)
         df = df.copy()
-        df["label_source"] = str(entry.get("label_source", "unknown"))
+        source = str(entry.get("label_source", "unknown"))
+        df["label_source"] = source
         df["split"] = str(entry.get("split", "none"))
+
+        if source.lower() == "gold" and upsample_gold > 1:
+            print(f"Upsampling gold shard {csv_path} by {upsample_gold}x")
+            df = pd.concat([df] * upsample_gold, ignore_index=True)
+
         frames.append(df)
 
     return pd.concat(frames, ignore_index=True)
