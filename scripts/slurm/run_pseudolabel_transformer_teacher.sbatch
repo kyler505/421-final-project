@@ -29,7 +29,7 @@ echo "Starting transformer teacher pseudolabeling at $(date)"
 echo "Teacher: ${TEACHER_PATH}"
 echo "MIMIC: ${MIMIC_CSV}"
 
-"${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/pseudolabel_mimic.py" \
+"${PYTHON_BIN}" -m src.tools.pseudolabel_mimic \
   --mimic-csv "${MIMIC_CSV}" \
   --teacher-mode transformer \
   --teacher-path "${TEACHER_PATH}" \

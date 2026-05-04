@@ -118,7 +118,7 @@ def get_row_ids(df: pd.DataFrame) -> list[int]:
 def load_training_manifest(path: str | Path, config: Config | None = None) -> pd.DataFrame:
     """Load and concatenate labeled shards described by a JSON manifest.
 
-    Manifest schema: see docs/data-manifest-schema.md. Each entry must point to a
+    Manifest schema: see docs/data/data-manifest-schema.md. Each entry must point to a
     CSV loadable by load_train_data. Adds optional columns ``label_source`` and
     ``split`` for provenance (gold vs silver, etc.).
     """

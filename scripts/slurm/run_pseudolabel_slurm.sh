@@ -37,7 +37,7 @@ export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
 
 echo "Starting pseudolabeling at $(date)"
 cmd=(
-  "${PYTHON_BIN}" "${PROJECT_ROOT}/scripts/pseudolabel_mimic.py"
+  "${PYTHON_BIN}" -m src.tools.pseudolabel_mimic
   --mimic-csv "${MIMIC_CSV}"
   --baseline-path "${BASELINE_MODEL}"
   --output-dir "${OUTPUT_DIR}"
