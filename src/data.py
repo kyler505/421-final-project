@@ -151,7 +151,7 @@ def load_training_manifest(
         df["label_source"] = source
         df["split"] = str(entry.get("split", "none"))
 
-        if source.lower() == "gold" and upsample_gold > 1:
+        if source.lower().startswith("gold") and upsample_gold > 1:
             print(f"Upsampling gold shard {csv_path} by {upsample_gold}x")
             df = pd.concat([df] * upsample_gold, ignore_index=True)
 
