@@ -66,6 +66,9 @@ python -m src.predict \
 - New baseline is still the safest ship candidate; the transformer is the experimental comparison model
 - Old combined (baseline teacher) was over-permissive
 - Transformer teacher pseudolabels were significantly better than baseline teacher
+- Linear sweep on the 20-row gold training split found a best config at `max_features=5000`, `ngram_range=(1, 2)`, `sublinear_tf=True`, `c=0.25` with `accuracy=0.85` and `F1=0.8933`
+- Grace validation run for ClinicalBERT completed cleanly on the 16/4 split but only reached `accuracy=0.75` and `F1=0.6667`, so it remains a comparison model rather than the submit pick
+- Current strongest completed submit candidate remains the tuned linear baseline, not the transformer
 
 ## Current baseline observations
 

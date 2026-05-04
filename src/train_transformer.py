@@ -14,6 +14,7 @@ from pathlib import Path
 from src.config import get_config
 from src.contracts import ARTIFACT_KIND_TRANSFORMER
 from src.data import get_texts_labels, load_train_data, load_training_manifest
+from src.eval_metrics import binary_classification_metrics
 from src.manifest import RunManifest, save_run_manifest
 
 
@@ -32,6 +33,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch_size", type=int, default=None, help="Batch size")
     parser.add_argument("--epochs", type=int, default=None, help="Number of epochs")
     parser.add_argument("--learning_rate", type=float, default=None, help="Learning rate")
+    parser.add_argument("--val", default=None, help="Optional validation CSV path for best-checkpoint selection")
+    parser.add_argument("--patience", type=int, default=2, help="Early stopping patience when validation is enabled")
     parser.add_argument(
         "--manifest",
         default=None,
@@ -96,7 +99,27 @@ def main() -> None:
 
     tokenized_dataset = dataset.map(tokenize_batch, batched=True)
 
-    training_args = TrainingArguments(
+    eval_df = None
+    eval_source = None
+    if args.val:
+        val_path = Path(args.val)
+        if not val_path.exists():
+            print(f"Error: validation file not found: {val_path}", file=sys.stderr)
+            sys.exit(1)
+        eval_df = load_train_data(val_path)
+        eval_source = str(val_path.resolve())
+
+    eval_dataset = None
+    if eval_df is not None:
+        eval_texts, eval_labels = get_texts_labels(eval_df)
+        eval_dataset = Dataset.from_dict({"text": eval_texts, "label": eval_labels}).map(tokenize_batch, batched=True)
+
+    def compute_metrics(eval_pred) -> dict[str, float]:
+        logits, metric_labels = eval_pred
+        predictions = logits.argmax(axis=-1)
+        return binary_classification_metrics(metric_labels, predictions)
+
+    training_args_kwargs = dict(
         output_dir=str(output_dir),
         per_device_train_batch_size=batch_size,
         num_train_epochs=epochs,
@@ -107,14 +130,44 @@ def main() -> None:
         save_strategy="epoch",
         report_to=[],
     )
+    if eval_dataset is not None:
+        training_args_kwargs.update(
+            dict(
+                eval_strategy="epoch",
+                load_best_model_at_end=True,
+                metric_for_best_model="accuracy",
+                greater_is_better=True,
+                save_total_limit=1,
+            )
+        )
+    training_args = TrainingArguments(**training_args_kwargs)
 
-    trainer = Trainer(
+    trainer_kwargs = dict(
         model=model,
         args=training_args,
         train_dataset=tokenized_dataset,
     )
+    if eval_dataset is not None:
+        trainer_kwargs.update(
+            dict(
+                eval_dataset=eval_dataset,
+                compute_metrics=compute_metrics,
+            )
+        )
+        try:
+            from transformers import EarlyStoppingCallback
 
-    print(f"Training on {len(texts)} rows from {train_source} for {epochs} epoch(s)...")
+            trainer_kwargs["callbacks"] = [EarlyStoppingCallback(early_stopping_patience=args.patience)]
+        except Exception:
+            pass
+    trainer = Trainer(**trainer_kwargs)
+
+    if eval_source:
+        print(
+            f"Training on {len(texts)} rows from {train_source} for {epochs} epoch(s) with validation on {eval_source}..."
+        )
+    else:
+        print(f"Training on {len(texts)} rows from {train_source} for {epochs} epoch(s)...")
     trainer.train()
     output_dir.mkdir(parents=True, exist_ok=True)
     model.save_pretrained(output_dir)
@@ -137,6 +190,8 @@ def main() -> None:
             "learning_rate": learning_rate,
             "weight_decay": config.weight_decay,
             "max_words_course": config.max_words_course,
+            "validation_path": eval_source,
+            "early_stopping_patience": args.patience,
         },
     )
     save_run_manifest(run_manifest, manifest_out)

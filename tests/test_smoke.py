@@ -186,6 +186,16 @@ def test_cv_baseline_stratified_runs() -> None:
     assert "f1" in means
 
 
+def test_linear_sweep_helpers() -> None:
+    from src.sweep_linear import build_factory, make_search_space
+
+    configs = make_search_space("baseline")
+    assert configs
+    assert "sublinear_tf" in configs[0]
+    model = build_factory("baseline", configs[0])()
+    assert model is not None
+
+
 def test_debug_predictions_format(tmp_path) -> None:
     from src.utils import save_debug_predictions
 

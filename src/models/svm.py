@@ -21,6 +21,7 @@ class SVMModel:
         ngram_range: tuple[int, int] = (1, 2),
         min_df: int = 1,
         max_df: float = 1.0,
+        sublinear_tf: bool = True,
         c: float = 1.0,
     ) -> None:
         self.pipeline = Pipeline(
@@ -32,6 +33,7 @@ class SVMModel:
                         ngram_range=ngram_range,
                         min_df=min_df,
                         max_df=max_df,
+                        sublinear_tf=sublinear_tf,
                         lowercase=True,
                         strip_accents="unicode",
                     ),

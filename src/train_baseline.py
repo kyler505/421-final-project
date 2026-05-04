@@ -23,6 +23,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max_features", type=int, default=None, help="Max TF-IDF features")
     parser.add_argument("--ngram_range", type=int, nargs=2, default=None, help="Example: 1 2")
     parser.add_argument(
+        "--sublinear_tf",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Use sublinear TF scaling in TF-IDF (default: enabled)",
+    )
+    parser.add_argument(
         "--manifest",
         default=None,
         help="Optional path for run manifest JSON (default: next to model as <name>_run_manifest.json)",
@@ -57,6 +63,7 @@ def main() -> None:
         ngram_range=tuple(args.ngram_range) if args.ngram_range else config.ngram_range,
         min_df=config.min_df,
         max_df=config.max_df,
+        sublinear_tf=True if args.sublinear_tf is None else args.sublinear_tf,
         c=config.logistic_c,
     )
     model.fit(texts, labels)
@@ -85,6 +92,7 @@ def main() -> None:
         hyperparams={
             "max_features": args.max_features or config.max_features,
             "ngram_range": list(args.ngram_range) if args.ngram_range else list(config.ngram_range),
+            "sublinear_tf": True if args.sublinear_tf is None else args.sublinear_tf,
             "logistic_c": config.logistic_c,
         },
     )
