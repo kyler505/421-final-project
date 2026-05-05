@@ -47,7 +47,7 @@ class EmbeddingEncoder:
             return np.zeros((0, self.hidden_size), dtype=np.float32)
         batch_size = batch_size or self.config.batch_size
         chunks: list[np.ndarray] = []
-        with torch.no_grad():
+        with self._torch.no_grad():
             for start in range(0, len(texts), batch_size):
                 batch = texts[start:start + batch_size]
                 encoded = self.tokenizer(
