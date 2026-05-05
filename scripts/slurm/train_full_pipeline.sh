@@ -12,12 +12,16 @@
 set -euo pipefail
 
 PROJECT_DIR="${PROJECT_DIR:-${SCRATCH:?SCRATCH is not set}/csce421-final-project}"
+RUN_TAG="${RUN_TAG:-${SLURM_JOB_ID:-manual}}"
+RUN_DIR="${RUN_DIR:-$PROJECT_DIR/runs/$RUN_TAG}"
 TRAIN_CSV="${TRAIN_CSV:-$PROJECT_DIR/data/raw/train_data-text_and_labels.csv}"
 NOTES_CSV_GZ="${NOTES_CSV_GZ:-/home/kcao/projects/csce421-final-project/data/raw/NOTEEVENTS.csv.gz}"
 UNLABELED_CSV="${UNLABELED_CSV:-$PROJECT_DIR/data/processed/unlabeled_mimic.csv}"
-MODEL_OUT="${MODEL_OUT:-$PROJECT_DIR/models/model.joblib}"
-SUMMARY_OUT="${SUMMARY_OUT:-$PROJECT_DIR/models/training_summary.json}"
-SWEEP_OUT="${SWEEP_OUT:-$PROJECT_DIR/models/sweep_summary.json}"
+MODEL_OUT="${MODEL_OUT:-$RUN_DIR/models/model.joblib}"
+SUMMARY_OUT="${SUMMARY_OUT:-$RUN_DIR/models/training_summary.json}"
+SWEEP_OUT="${SWEEP_OUT:-$RUN_DIR/models/sweep_summary.json}"
+PRED_DIR="${PRED_DIR:-$RUN_DIR/predictions}"
+DEBUG_DIR="${DEBUG_DIR:-$RUN_DIR/debug}"
 MAX_UNLABELED="${MAX_UNLABELED:-150}"
 UNLABELED_LIMIT="${UNLABELED_LIMIT:-3000}"
 REPLACE_NUMBERS="${REPLACE_NUMBERS:-1}"
@@ -31,9 +35,11 @@ SSL_RANK_MODE="${SSL_RANK_MODE:-0}"
 SSL_TEACHER_MODEL="${SSL_TEACHER_MODEL:-}"
 EMBEDDING_MODEL="${EMBEDDING_MODEL:-}"
 NO_EMBEDDINGS="${NO_EMBEDDINGS:-0}"
+PUBLISH_ROOT_OUTPUTS="${PUBLISH_ROOT_OUTPUTS:-0}"
 
-mkdir -p "$PROJECT_DIR/logs" "$PROJECT_DIR/models" "$PROJECT_DIR/outputs" "$PROJECT_DIR/data/processed"
+mkdir -p "$PROJECT_DIR/logs" "$PROJECT_DIR/models" "$PROJECT_DIR/outputs" "$PROJECT_DIR/data/processed" "$RUN_DIR/models" "$PRED_DIR" "$DEBUG_DIR"
 cd "$PROJECT_DIR"
+ln -sfn "$RUN_DIR" "$PROJECT_DIR/latest-run"
 
 module purge
 module load GCC/13.3.0 OpenMPI/5.0.3 scikit-learn/1.6.1
@@ -86,9 +92,21 @@ fi
 cp "$SWEEP_OUT" "$SUMMARY_OUT"
 
 for split in test01 test02 test03; do
+  pred_out="$PRED_DIR/${split}-pred.csv"
+  debug_out="$DEBUG_DIR/${split}-debug.csv"
   "$PYTHON" -m src.predict \
     --model "$MODEL_OUT" \
     --input "$PROJECT_DIR/data/raw/${split}_text_only.csv" \
-    --output "$PROJECT_DIR/${split}-pred.csv" \
-    --debug-output "$PROJECT_DIR/outputs/${split}-debug.csv"
+    --output "$pred_out" \
+    --debug-output "$debug_out"
 done
+
+if [ "$PUBLISH_ROOT_OUTPUTS" != "0" ]; then
+  for split in test01 test02 test03; do
+    cp "$PRED_DIR/${split}-pred.csv" "$PROJECT_DIR/${split}-pred.csv"
+    cp "$DEBUG_DIR/${split}-debug.csv" "$PROJECT_DIR/outputs/${split}-debug.csv"
+  done
+  cp "$SWEEP_OUT" "$PROJECT_DIR/models/sweep_summary.json"
+  cp "$SUMMARY_OUT" "$PROJECT_DIR/models/training_summary.json"
+  cp "$MODEL_OUT" "$PROJECT_DIR/models/model.joblib"
+fi
