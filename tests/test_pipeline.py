@@ -155,3 +155,93 @@ def test_fit_full_pipeline_fixed_threshold_and_teacher_mode(monkeypatch):
     assert bundle.threshold == 0.43
     assert bundle.weights == {"baseline": 0.5, "ssl": 0.3, "embedding": 0.2}
     assert bundle.embedding is not None
+
+
+def test_fit_full_pipeline_writes_pseudo_manifest(tmp_path, monkeypatch):
+    class FakeModel:
+        def __init__(self, probs):
+            self._probs = np.asarray(probs, dtype=float)
+            self.pseudo_rows = 0
+
+        def predict_proba(self, texts):
+            if len(self._probs) >= len(texts):
+                return self._probs[: len(texts)]
+            reps = int(np.ceil(len(texts) / len(self._probs)))
+            return np.tile(self._probs, reps)[: len(texts)]
+
+    teacher = FakeModel([0.97, 0.96, 0.04, 0.03])
+
+    monkeypatch.setattr(
+        model_module,
+        "_resolve_teacher_model",
+        lambda *args, **kwargs: (teacher, "tfidf"),
+    )
+    monkeypatch.setattr(model_module, "fit_tfidf_model", lambda *args, **kwargs: FakeModel([0.5, 0.5, 0.5, 0.5]))
+    monkeypatch.setattr(model_module, "fit_embedding_model", lambda *args, **kwargs: FakeModel([0.5, 0.5, 0.5, 0.5]))
+    monkeypatch.setattr(
+        model_module,
+        "cross_validated_component_probs",
+        lambda *args, **kwargs: {
+            "baseline": np.array([0.9, 0.1, 0.8, 0.2], dtype=float),
+            "ssl": np.array([0.88, 0.12, 0.77, 0.25], dtype=float),
+            "embedding": np.array([0.87, 0.14, 0.79, 0.24], dtype=float),
+        },
+    )
+
+    manifest_path = tmp_path / "pseudo_manifest.csv"
+    bundle, report = fit_full_pipeline(
+        ["alpha positive", "beta negative", "gamma positive", "delta negative"],
+        [1, 0, 1, 0],
+        unlabeled_texts=[("u1", "one"), ("u2", "two"), ("u3", "three"), ("u4", "four")],
+        vectorizer_cfg=VectorizerConfig(max_features_word=100, max_features_char=100),
+        ssl_cfg=SelfTrainingConfig(enabled=True, rounds=1, rank_mode=False, positive_confidence=0.95, negative_confidence=0.05),
+        embedding_cfg=None,
+        teacher_mode="tfidf",
+        logistic_cfg=LogisticConfig(c=1.0),
+        fixed_weights={"baseline": 1.0},
+        fixed_threshold=0.5,
+        pseudo_manifest_output=str(manifest_path),
+    )
+
+    assert report["pseudo_manifest_output"] == str(manifest_path)
+    assert bundle.metadata["teacher_mode"] == "tfidf"
+    assert manifest_path.exists()
+    rows = list(csv.DictReader(manifest_path.open(newline="", encoding="utf-8")))
+    assert len(rows) == 4
+    assert rows[0]["source"] == "tfidf"
+    assert rows[0]["row_id"] == "u1"
+
+
+def test_fit_self_training_tfidf_stops_when_unlabeled_pool_is_empty(monkeypatch, tmp_path):
+    class FakeModel:
+        def __init__(self, probs):
+            self._probs = np.asarray(probs, dtype=float)
+            self.pseudo_rows = 0
+
+        def predict_proba(self, texts):
+            if not texts:
+                return np.asarray([], dtype=float)
+            reps = int(np.ceil(len(texts) / len(self._probs)))
+            return np.tile(self._probs, reps)[: len(texts)]
+
+    teacher = FakeModel([0.99, 0.98, 0.02, 0.01])
+
+    monkeypatch.setattr(
+        model_module,
+        "_resolve_teacher_model",
+        lambda *args, **kwargs: (teacher, "tfidf"),
+    )
+    monkeypatch.setattr(model_module, "fit_tfidf_model", lambda *args, **kwargs: FakeModel([0.5, 0.5, 0.5, 0.5]))
+
+    manifest_path = tmp_path / "pseudo.csv"
+    model, summary = model_module.fit_self_training_tfidf(
+        ["alpha positive", "beta negative", "gamma positive", "delta negative"],
+        [1, 0, 1, 0],
+        unlabeled_texts=[("u1", "one"), ("u2", "two"), ("u3", "three"), ("u4", "four")],
+        ssl_cfg=SelfTrainingConfig(enabled=True, rounds=2, positive_confidence=0.5, negative_confidence=0.5, pseudo_weight=0.2),
+        teacher_mode="tfidf",
+        pseudo_manifest=[],
+    )
+
+    assert model.pseudo_rows == 4
+    assert summary.rounds_completed == 1

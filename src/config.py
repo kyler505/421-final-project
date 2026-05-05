@@ -34,11 +34,11 @@ class LogisticConfig:
 class SelfTrainingConfig:
     enabled: bool = True
     rounds: int = 2
-    positive_confidence: float = 0.90
-    negative_confidence: float = 0.10
-    pseudo_weight: float = 0.35
-    # Ranking mode: use top-K instead of absolute thresholds (for tiny datasets)
-    rank_mode: bool = True
+    positive_confidence: float = 0.95
+    negative_confidence: float = 0.05
+    pseudo_weight: float = 0.20
+    # Ranking mode is kept for smoke tests; production uses threshold-based SSL.
+    rank_mode: bool = False
     rank_top_k: int = 20
     max_pool: int = 500
 

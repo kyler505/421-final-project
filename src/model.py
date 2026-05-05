@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass, field, asdict
 from itertools import product
+from pathlib import Path
 from typing import Any
 
 import joblib
@@ -14,7 +16,7 @@ from sklearn.model_selection import LeaveOneOut
 
 from .config import DEFAULT_THRESHOLD, RANDOM_STATE, EmbeddingConfig, LogisticConfig, SelfTrainingConfig, VectorizerConfig
 from .embeddings import get_embedding_encoder
-from .text import deduplicate_texts
+from .text import normalize_text
 
 
 @dataclass
@@ -134,6 +136,37 @@ def _stack_features(word_vec, char_vec, texts: list[str]):
     return hstack([word_vec.transform(texts), char_vec.transform(texts)])
 
 
+def _coerce_unlabeled_records(unlabeled_examples: list[str] | list[tuple[str, str]] | None) -> tuple[list[str], list[str]]:
+    row_ids: list[str] = []
+    texts: list[str] = []
+    if not unlabeled_examples:
+        return row_ids, texts
+    first = unlabeled_examples[0]
+    if isinstance(first, tuple):
+        for row_id, text in unlabeled_examples:  # type: ignore[misc]
+            row_ids.append(str(row_id) if row_id is not None else '')
+            texts.append(str(text))
+        return row_ids, texts
+    for text in unlabeled_examples:  # type: ignore[assignment]
+        row_ids.append('')
+        texts.append(str(text))
+    return row_ids, texts
+
+
+def _dedupe_unlabeled_records(row_ids: list[str], texts: list[str]) -> tuple[list[str], list[str]]:
+    seen: set[str] = set()
+    deduped_row_ids: list[str] = []
+    deduped_texts: list[str] = []
+    for row_id, text in zip(row_ids, texts):
+        norm = normalize_text(text)
+        if norm in seen:
+            continue
+        seen.add(norm)
+        deduped_row_ids.append(row_id)
+        deduped_texts.append(text)
+    return deduped_row_ids, deduped_texts
+
+
 def _fit_logistic(X, labels, sample_weight=None, cfg: LogisticConfig | None = None):
     cfg = cfg or LogisticConfig()
     kwargs = {
@@ -172,34 +205,35 @@ def fit_tfidf_model(
 
 def _rank_based_pseudo_labels(
     model: Any,
-    unlabeled_texts: list[str],
+    unlabeled_texts: list[str] | list[tuple[str, str]],
     top_k: int,
 ) -> tuple[list[str], list[int], list[float]]:
     """Select top-K most confident positive and negative predictions."""
-    probs = model.predict_proba(unlabeled_texts)
+    _, candidate_texts = _coerce_unlabeled_records(unlabeled_texts)
+    probs = model.predict_proba(candidate_texts)
     # Sort indices by probability descending (most positive first)
     ranked = sorted(range(len(probs)), key=lambda i: probs[i], reverse=True)
-    texts: list[str] = []
+    pseudo_texts: list[str] = []
     labels: list[int] = []
     weights: list[float] = []
     seen: set[str] = set()
     # Top K positive
     for idx in ranked[:top_k]:
-        txt = unlabeled_texts[idx]
+        txt = candidate_texts[idx]
         if txt not in seen:
-            texts.append(txt)
+            pseudo_texts.append(txt)
             labels.append(1)
             weights.append(float(probs[idx]))
             seen.add(txt)
     # Bottom K negative (most negative first)
     for idx in reversed(ranked[-top_k:]):
-        txt = unlabeled_texts[idx]
+        txt = candidate_texts[idx]
         if txt not in seen:
-            texts.append(txt)
+            pseudo_texts.append(txt)
             labels.append(0)
             weights.append(1.0 - float(probs[idx]))
             seen.add(txt)
-    return texts, labels, weights
+    return pseudo_texts, labels, weights
 
 
 def _resolve_teacher_model(
@@ -225,7 +259,7 @@ def _resolve_teacher_model(
 def _similarity_based_pseudo_labels(
     gold_texts: list[str],
     gold_labels: list[int],
-    unlabeled_texts: list[str],
+    unlabeled_texts: list[str] | list[tuple[str, str]],
     top_k: int,
     embedding_cfg: EmbeddingConfig,
     max_pool: int = 500,
@@ -239,6 +273,7 @@ def _similarity_based_pseudo_labels(
     import random
     from sklearn.metrics.pairwise import cosine_similarity
 
+    _, unlabeled_texts = _coerce_unlabeled_records(unlabeled_texts)
     # Limit unlabeled pool for speed
     pool = unlabeled_texts if len(unlabeled_texts) <= max_pool else random.sample(unlabeled_texts, max_pool)
 
@@ -294,12 +329,13 @@ def _similarity_based_pseudo_labels(
 def fit_self_training_tfidf(
     gold_texts: list[str],
     gold_labels: list[int],
-    unlabeled_texts: list[str] | None = None,
+    unlabeled_texts: list[str] | list[tuple[str, str]] | None = None,
     vectorizer_cfg: VectorizerConfig | None = None,
     ssl_cfg: SelfTrainingConfig | None = None,
     logistic_cfg: LogisticConfig | None = None,
     teacher_mode: str | None = None,
     teacher_cfg: EmbeddingConfig | None = None,
+    pseudo_manifest: list[dict[str, Any]] | None = None,
 ) -> tuple[TfidfBinaryModel, SelfTrainingSummary]:
     vectorizer_cfg = vectorizer_cfg or VectorizerConfig()
     ssl_cfg = ssl_cfg or SelfTrainingConfig()
@@ -308,8 +344,9 @@ def fit_self_training_tfidf(
     combined_texts = list(gold_texts)
     combined_labels = list(gold_labels)
     sample_weight = [1.0] * len(gold_labels)
-    remaining = deduplicate_texts(unlabeled_texts or [])
-    if not ssl_cfg.enabled or not remaining:
+    remaining_row_ids, remaining_texts = _coerce_unlabeled_records(unlabeled_texts)
+    remaining_row_ids, remaining_texts = _dedupe_unlabeled_records(remaining_row_ids, remaining_texts)
+    if not ssl_cfg.enabled or not remaining_texts:
         model = fit_tfidf_model(combined_texts, combined_labels, vectorizer_cfg, sample_weight=sample_weight, logistic_cfg=logistic_cfg)
         model.pseudo_rows = 0
         return model, summary
@@ -327,7 +364,7 @@ def fit_self_training_tfidf(
             teacher_model = fit_tfidf_model(gold_texts, gold_labels, vectorizer_cfg, sample_weight=sample_weight, logistic_cfg=logistic_cfg)
         pseudo_texts, pseudo_labels, pseudo_weights = _rank_based_pseudo_labels(
             teacher_model,
-            remaining,
+            remaining_texts,
             top_k=ssl_cfg.rank_top_k,
         )
         if not pseudo_texts:
@@ -345,24 +382,74 @@ def fit_self_training_tfidf(
         final_model.pseudo_rows = summary.pseudo_rows
         return final_model, summary
 
+    teacher_model: Any | None = None
+    resolved_teacher_mode: str | None = None
+    if teacher_mode is not None or teacher_cfg is not None:
+        teacher_model, resolved_teacher_mode = _resolve_teacher_model(
+            gold_texts,
+            gold_labels,
+            vectorizer_cfg,
+            logistic_cfg,
+            teacher_mode,
+            teacher_cfg,
+        )
+
     for round_idx in range(ssl_cfg.rounds):
-        current_model = fit_tfidf_model(combined_texts, combined_labels, vectorizer_cfg, sample_weight=sample_weight, logistic_cfg=logistic_cfg)
-        probs = current_model.predict_proba(remaining)
+        if not remaining_texts:
+            summary.rounds_completed = round_idx
+            break
+        if teacher_model is None:
+            scorer = fit_tfidf_model(
+                combined_texts,
+                combined_labels,
+                vectorizer_cfg,
+                sample_weight=sample_weight,
+                logistic_cfg=logistic_cfg,
+            )
+            scorer_name = 'student'
+        else:
+            scorer = teacher_model
+            scorer_name = resolved_teacher_mode or 'teacher'
+        probs = scorer.predict_proba(remaining_texts)
         keep_texts: list[str] = []
         keep_labels: list[int] = []
         keep_weights: list[float] = []
         keep_set: set[str] = set()
-        for text, p in zip(remaining, probs):
+        for row_id, text, p in zip(remaining_row_ids, remaining_texts, probs):
             if p >= ssl_cfg.positive_confidence:
                 keep_texts.append(text)
                 keep_labels.append(1)
                 keep_weights.append(ssl_cfg.pseudo_weight)
-                keep_set.add(text)
+                keep_set.add(normalize_text(text))
+                if pseudo_manifest is not None:
+                    pseudo_manifest.append(
+                        {
+                            'round': round_idx + 1,
+                            'source': scorer_name,
+                            'row_id': row_id,
+                            'text': text,
+                            'label': 1,
+                            'score': float(p),
+                            'weight': float(ssl_cfg.pseudo_weight),
+                        }
+                    )
             elif p <= ssl_cfg.negative_confidence:
                 keep_texts.append(text)
                 keep_labels.append(0)
                 keep_weights.append(ssl_cfg.pseudo_weight)
-                keep_set.add(text)
+                keep_set.add(normalize_text(text))
+                if pseudo_manifest is not None:
+                    pseudo_manifest.append(
+                        {
+                            'round': round_idx + 1,
+                            'source': scorer_name,
+                            'row_id': row_id,
+                            'text': text,
+                            'label': 0,
+                            'score': float(p),
+                            'weight': float(ssl_cfg.pseudo_weight),
+                        }
+                    )
         if not keep_texts:
             summary.rounds_completed = round_idx
             break
@@ -372,11 +459,28 @@ def fit_self_training_tfidf(
         summary.pseudo_rows += len(keep_texts)
         summary.pseudo_positive += int(sum(keep_labels))
         summary.pseudo_negative += int(len(keep_labels) - sum(keep_labels))
-        remaining = [text for text in remaining if text not in keep_set]
+        remaining_pairs = [
+            (row_id, text)
+            for row_id, text in zip(remaining_row_ids, remaining_texts)
+            if normalize_text(text) not in keep_set
+        ]
+        remaining_row_ids = [row_id for row_id, _ in remaining_pairs]
+        remaining_texts = [text for _, text in remaining_pairs]
         summary.rounds_completed = round_idx + 1
     final_model = fit_tfidf_model(combined_texts, combined_labels, vectorizer_cfg, sample_weight=sample_weight, logistic_cfg=logistic_cfg)
     final_model.pseudo_rows = summary.pseudo_rows
     return final_model, summary
+
+
+def _write_pseudo_manifest(path: str | Path, rows: list[dict[str, Any]]) -> None:
+    out_path = Path(path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    fieldnames = ['round', 'source', 'row_id', 'text', 'label', 'score', 'weight']
+    with out_path.open('w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames, lineterminator='\n')
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({name: row.get(name) for name in fieldnames})
 
 
 def fit_embedding_model(
@@ -482,7 +586,12 @@ def _score_thresholds(probs: np.ndarray, labels: np.ndarray, threshold_step: flo
         if best is None:
             best = candidate
             continue
-        if (candidate.f1, candidate.accuracy, candidate.recall, -candidate.threshold) > (best.f1, best.accuracy, best.recall, -best.threshold):
+        if (candidate.f1, candidate.precision, candidate.accuracy, -candidate.threshold) > (
+            best.f1,
+            best.precision,
+            best.accuracy,
+            -best.threshold,
+        ):
             best = candidate
     return best
 
@@ -517,7 +626,12 @@ def search_weights_and_threshold(
         if best is None:
             best = candidate
             continue
-        if (candidate.f1, candidate.accuracy, candidate.recall, -candidate.threshold) > (best.f1, best.accuracy, best.recall, -best.threshold):
+        if (candidate.f1, candidate.precision, candidate.accuracy, -candidate.threshold) > (
+            best.f1,
+            best.precision,
+            best.accuracy,
+            -best.threshold,
+        ):
             best = candidate
     if best is None:
         raise RuntimeError('Unable to determine ensemble weights')
@@ -527,7 +641,7 @@ def search_weights_and_threshold(
 def cross_validated_component_probs(
     gold_texts: list[str],
     gold_labels: list[int],
-    unlabeled_texts: list[str] | None,
+    unlabeled_texts: list[str] | list[tuple[str, str]] | None,
     vectorizer_cfg: VectorizerConfig | None = None,
     ssl_cfg: SelfTrainingConfig | None = None,
     embedding_cfg: EmbeddingConfig | None = None,
@@ -572,7 +686,7 @@ def cross_validated_component_probs(
 def fit_full_pipeline(
     gold_texts: list[str],
     gold_labels: list[int],
-    unlabeled_texts: list[str] | None = None,
+    unlabeled_texts: list[str] | list[tuple[str, str]] | None = None,
     vectorizer_cfg: VectorizerConfig | None = None,
     ssl_cfg: SelfTrainingConfig | None = None,
     embedding_cfg: EmbeddingConfig | None = None,
@@ -583,6 +697,7 @@ def fit_full_pipeline(
     threshold_step: float = 0.01,
     fixed_weights: dict[str, float] | None = None,
     fixed_threshold: float | None = None,
+    pseudo_manifest_output: str | None = None,
 ) -> tuple[EnsembleBundle, dict[str, Any]]:
     vectorizer_cfg = vectorizer_cfg or VectorizerConfig()
     ssl_cfg = ssl_cfg or SelfTrainingConfig()
@@ -653,6 +768,7 @@ def fit_full_pipeline(
         confidence_positive=ssl_cfg.positive_confidence,
         confidence_negative=ssl_cfg.negative_confidence,
     )
+    pseudo_manifest: list[dict[str, Any]] = []
     teacher_model, resolved_teacher_mode = _resolve_teacher_model(
         gold_texts,
         gold_labels,
@@ -693,6 +809,7 @@ def fit_full_pipeline(
                 logistic_cfg=logistic_cfg,
                 teacher_mode=teacher_mode,
                 teacher_cfg=teacher_cfg,
+                pseudo_manifest=pseudo_manifest if pseudo_manifest_output else None,
             )
             ssl_summary = ssl_summary2
     elif ssl_cfg.enabled and ssl_cfg.rank_mode and unlabeled_texts and embedding_cfg is not None:
@@ -731,6 +848,7 @@ def fit_full_pipeline(
                 logistic_cfg=logistic_cfg,
                 teacher_mode=teacher_mode,
                 teacher_cfg=teacher_cfg,
+                pseudo_manifest=pseudo_manifest if pseudo_manifest_output else None,
             )
             ssl_summary = ssl_summary2
     else:
@@ -743,9 +861,12 @@ def fit_full_pipeline(
             logistic_cfg=logistic_cfg,
             teacher_mode=teacher_mode,
             teacher_cfg=teacher_cfg,
+            pseudo_manifest=pseudo_manifest if pseudo_manifest_output else None,
         )
 
     embedding_model = fit_embedding_model(gold_texts, gold_labels, embedding_cfg) if embedding_cfg is not None else None
+    if pseudo_manifest_output:
+        _write_pseudo_manifest(pseudo_manifest_output, pseudo_manifest)
 
     bundle = EnsembleBundle(
         baseline=baseline,
@@ -767,6 +888,7 @@ def fit_full_pipeline(
                 'recall': best.recall,
             },
             'ssl_summary': asdict(ssl_summary),
+            'pseudo_manifest_output': pseudo_manifest_output,
             'component_cv_metrics': component_cv_metrics,
             'component_cv_probabilities': {k: v.tolist() for k, v in component_probs.items()},
         },
@@ -781,6 +903,7 @@ def fit_full_pipeline(
             'recall': best.recall,
         },
         'ssl_summary': asdict(ssl_summary),
+        'pseudo_manifest_output': pseudo_manifest_output,
         'component_names': bundle.component_names(),
         'component_cv_metrics': component_cv_metrics,
         'vectorizer_cfg': asdict(vectorizer_cfg),

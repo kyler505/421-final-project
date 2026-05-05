@@ -37,9 +37,17 @@ def split_candidate_sentences(text: str, max_words: int = 128, min_words: int = 
     return out
 
 
-def iter_sentence_candidates(notes_gz_path: str | Path, max_words: int = 128) -> Iterator[tuple[str, str]]:
+def iter_sentence_candidates(
+    notes_gz_path: str | Path,
+    max_words: int = 128,
+    max_sentences_per_note: int = 0,
+) -> Iterator[tuple[str, str]]:
     for row in iter_discharge_summaries(notes_gz_path):
         text = row.get('TEXT') or ''
         note_id = row.get('ROW_ID') or ''
+        emitted = 0
         for sent in split_candidate_sentences(text, max_words=max_words):
+            if max_sentences_per_note and emitted >= max_sentences_per_note:
+                break
             yield note_id, sent
+            emitted += 1

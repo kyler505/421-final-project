@@ -8,7 +8,7 @@ from pathlib import Path
 from .config import EmbeddingConfig, LogisticConfig, MAX_WORDS, SelfTrainingConfig, VectorizerConfig
 from .data import read_examples, read_labeled_dataset
 from .model import cross_validated_component_probs, fit_full_pipeline, metrics_at_threshold, save_bundle, search_weights_and_threshold
-from .text import deduplicate_texts, normalize_for_vectorizer, truncate_words
+from .text import normalize_for_vectorizer, normalize_text, truncate_words
 
 
 def build_parser():
@@ -31,33 +31,49 @@ def build_parser():
     p.add_argument('--ssl-rank-mode', action='store_true', help='Use rank-based pseudo-labeling when embeddings are enabled')
     p.add_argument('--ssl-rank-top-k', type=int, default=20, help='Top-K for rank-based pseudo-labeling')
     p.add_argument('--ssl-max-pool', type=int, default=500, help='Max unlabeled pool for rank-based pseudo-labeling')
+    p.add_argument('--ssl-teacher-mode', choices=['tfidf', 'embedding'], default=None, help='Teacher used for rank-based SSL pseudo-labeling')
     p.add_argument('--ssl-teacher-embedding-model', default=None, help='Optional frozen embedding teacher for pseudo-label generation')
+    p.add_argument('--pseudo-manifest-output', default=None, help='Optional CSV file of pseudo-labeled rows')
+    p.add_argument('--calibration-mode', action='store_true', help='Use a narrower calibration-only grid')
     return p
 
 
-def _load_unlabeled(paths: list[str], max_rows: int = 0, replace_numbers: bool = False) -> list[str]:
-    texts: list[str] = []
+def _load_unlabeled(paths: list[str], max_rows: int = 0, replace_numbers: bool = False) -> list[tuple[str, str]]:
+    rows: list[tuple[str, str]] = []
+    seen: set[str] = set()
     for path in paths:
         for row in read_examples(path):
-            texts.append(truncate_words(normalize_for_vectorizer(row.text, replace_numbers=replace_numbers), MAX_WORDS))
-            if max_rows and len(texts) >= max_rows:
-                return deduplicate_texts(texts)
-    return deduplicate_texts(texts)
+            text = truncate_words(normalize_for_vectorizer(row.text, replace_numbers=replace_numbers), MAX_WORDS)
+            norm = normalize_text(text)
+            if norm in seen:
+                continue
+            seen.add(norm)
+            rows.append((row.row_id, text))
+            if max_rows and len(rows) >= max_rows:
+                return rows
+    return rows
 
 
-def _candidate_grid(replace_numbers: bool):
-    vectorizers = [
-        VectorizerConfig((1, 2), (3, 5), 5000, 5000, 1, replace_numbers),
-        VectorizerConfig((1, 3), (3, 5), 20000, 10000, 1, replace_numbers),
-        VectorizerConfig((1, 2), (3, 4), 10000, 5000, 1, replace_numbers),
-    ]
-    c_values = [0.25, 1.0, 3.0, 10.0]
+def _candidate_grid(replace_numbers: bool, calibration_mode: bool = False):
+    if calibration_mode:
+        vectorizers = [
+            VectorizerConfig((1, 3), (3, 5), 40000, 30000, 1, replace_numbers),
+        ]
+        c_values = [0.25, 1.0, 3.0]
+    else:
+        vectorizers = [
+            VectorizerConfig((1, 2), (3, 5), 5000, 5000, 1, replace_numbers),
+            VectorizerConfig((1, 3), (3, 5), 20000, 10000, 1, replace_numbers),
+            VectorizerConfig((1, 2), (3, 4), 10000, 5000, 1, replace_numbers),
+        ]
+        c_values = [0.25, 1.0, 3.0, 10.0]
     logistics = [
         LogisticConfig(c=c, solver='liblinear', penalty='l2', class_weight=class_weight)
         for class_weight in (None, 'balanced')
         for c in c_values
     ]
-    logistics.append(LogisticConfig(c=3.0, solver='saga', penalty='elasticnet', l1_ratio=0.1, max_iter=8000, class_weight=None))
+    if not calibration_mode:
+        logistics.append(LogisticConfig(c=3.0, solver='saga', penalty='elasticnet', l1_ratio=0.1, max_iter=8000, class_weight=None))
     for vi, vectorizer_cfg in enumerate(vectorizers):
         for li, logistic_cfg in enumerate(logistics):
             yield f'v{vi}_lr{li}', vectorizer_cfg, logistic_cfg
@@ -84,7 +100,7 @@ def main(argv=None):
     embedding_cfg = None if args.no_embeddings else EmbeddingConfig(model_name=args.embedding_model)
 
     results = []
-    for name, vectorizer_cfg, logistic_cfg in _candidate_grid(args.replace_numbers):
+    for name, vectorizer_cfg, logistic_cfg in _candidate_grid(args.replace_numbers, calibration_mode=args.calibration_mode):
         component_probs = cross_validated_component_probs(
             texts,
             labels,
@@ -92,6 +108,7 @@ def main(argv=None):
             vectorizer_cfg=vectorizer_cfg,
             ssl_cfg=ssl_cfg,
             embedding_cfg=embedding_cfg,
+            teacher_mode=args.ssl_teacher_mode,
             teacher_cfg=teacher_cfg,
             logistic_cfg=logistic_cfg,
         )
@@ -118,7 +135,7 @@ def main(argv=None):
         )
         print(name, results[-1]['metrics'], results[-1]['weights'], flush=True)
 
-    results.sort(key=lambda r: (r['metrics']['f1'], r['metrics']['accuracy'], r['metrics']['recall']), reverse=True)
+    results.sort(key=lambda r: (r['metrics']['f1'], r['metrics']['precision'], r['metrics']['accuracy'], r['metrics']['recall']), reverse=True)
     summary = {'best': results[0], 'results': results}
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -133,10 +150,12 @@ def main(argv=None):
             vectorizer_cfg=VectorizerConfig(**best['vectorizer_cfg']),
             ssl_cfg=ssl_cfg,
             embedding_cfg=embedding_cfg,
+            teacher_mode=args.ssl_teacher_mode,
             teacher_cfg=teacher_cfg,
             logistic_cfg=LogisticConfig(**best['logistic_cfg']),
             fixed_weights=best['weights'],
             threshold_step=args.threshold_step,
+            pseudo_manifest_output=args.pseudo_manifest_output,
         )
         save_bundle(bundle, args.model_output)
     return 0
