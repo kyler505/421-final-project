@@ -9,6 +9,7 @@ from src.data import read_labeled_dataset
 import src.model as model_module
 from src.model import fit_full_pipeline, metrics_at_threshold, predict_component_proba
 from src.predict import main as predict_main
+from src.unlabeled_cache import UnlabeledCandidate, filter_candidates, read_cache, write_cache
 from src.text import has_strong_negation, normalize_for_vectorizer, truncate_words
 
 
@@ -300,3 +301,64 @@ def test_fit_self_training_tfidf_respects_per_class_caps_and_gold_weight(monkeyp
     assert summary.round_stats[0]["accepted_negative"] == 1
     assert summary.round_stats[0]["gold_weight"] == 7.0
     assert any(weights == [7.0, 7.0, 7.0, 7.0, 0.2, 0.2] for weights in fit_calls if weights is not None)
+
+
+def test_unlabeled_cache_filters_and_roundtrips(tmp_path):
+    rows = [
+        UnlabeledCandidate(row_id="1", note_id="n1", sentence="electronically signed by", sentence_hash="a", word_count=3),
+        UnlabeledCandidate(row_id="2", note_id="n1", sentence="pneumonia treated with antibiotics", sentence_hash="b", word_count=4),
+        UnlabeledCandidate(row_id="3", note_id="n1", sentence="pneumonia treated with antibiotics", sentence_hash="c", word_count=4),
+    ]
+    kept, dropped = filter_candidates(rows, per_note_cap=10, candidate_cap=10)
+    assert len(kept) == 1
+    assert dropped[0].drop_reason == "too_short"
+    assert any(r.drop_reason == "duplicate" for r in dropped)
+
+    cache_path = tmp_path / "unlabeled_sentences.parquet"
+    write_cache(kept, cache_path)
+    loaded = read_cache(cache_path if cache_path.exists() else cache_path.with_suffix(".csv.gz"))
+    assert loaded[0].sentence == "pneumonia treated with antibiotics"
+
+
+def test_fit_full_pipeline_uses_pseudo_manifest_input(monkeypatch):
+    manifest_rows = [
+        {"round": "1", "source": "manifest", "row_id": "u1", "text": "one", "label": "1", "score": "0.99", "weight": "0.2"},
+        {"round": "1", "source": "manifest", "row_id": "u2", "text": "two", "label": "0", "score": "0.01", "weight": "0.2"},
+    ]
+    load_calls = []
+
+    monkeypatch.setattr(model_module, "_read_pseudo_manifest", lambda path: load_calls.append(path) or manifest_rows)
+    monkeypatch.setattr(
+        model_module,
+        "cross_validated_component_probs",
+        lambda *args, **kwargs: {
+            "baseline": np.array([0.9, 0.1], dtype=float),
+            "ssl": np.array([0.85, 0.15], dtype=float),
+        },
+    )
+
+    class FakeModel:
+        def __init__(self):
+            self.pseudo_rows = 0
+        def predict_proba(self, texts):
+            return np.full(len(texts), 0.5, dtype=float)
+
+    monkeypatch.setattr(model_module, "fit_tfidf_model", lambda *args, **kwargs: FakeModel())
+    monkeypatch.setattr(model_module, "fit_embedding_model", lambda *args, **kwargs: None)
+
+    bundle, report = fit_full_pipeline(
+        ["alpha", "beta"],
+        [1, 0],
+        unlabeled_texts=None,
+        vectorizer_cfg=VectorizerConfig(max_features_word=10, max_features_char=10),
+        ssl_cfg=SelfTrainingConfig(enabled=True),
+        embedding_cfg=None,
+        logistic_cfg=LogisticConfig(c=1.0),
+        fixed_weights={"baseline": 1.0, "ssl": 0.0},
+        fixed_threshold=0.5,
+        pseudo_manifest_input="manifest.csv",
+    )
+
+    assert load_calls == ["manifest.csv"]
+    assert report["ssl_summary"]["pseudo_rows"] == 2
+    assert bundle.ssl.pseudo_rows == 2

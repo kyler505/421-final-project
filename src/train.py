@@ -7,7 +7,7 @@ from pathlib import Path
 from sklearn.metrics import accuracy_score, classification_report, f1_score, precision_score, recall_score
 
 from .config import EmbeddingConfig, LogisticConfig, MAX_WORDS, SelfTrainingConfig, VectorizerConfig
-from .data import read_examples, read_labeled_dataset
+from .data import read_examples, read_labeled_dataset, read_unlabeled_records
 from .model import fit_full_pipeline, predict_component_proba, save_bundle
 from .text import normalize_for_vectorizer, normalize_text, truncate_words
 
@@ -44,6 +44,7 @@ def build_parser():
     p.add_argument('--fixed-plan-weights', action='store_true', help='Use the plan weights: baseline=.5 ssl=.3 embedding=.2')
     p.add_argument('--fixed-ensemble-threshold', type=float, default=None, help='Use a fixed ensemble threshold instead of searching')
     p.add_argument('--pseudo-manifest-output', default=None, help='Optional CSV file of pseudo-labeled rows')
+    p.add_argument('--pseudo-manifest-input', default=None, help='Optional CSV manifest of precomputed pseudo-labeled rows')
     return p
 
 
@@ -51,13 +52,12 @@ def _load_unlabeled(paths: list[str], max_rows: int = 0, replace_numbers: bool =
     rows: list[tuple[str, str]] = []
     seen: set[str] = set()
     for path in paths:
-        for row in read_examples(path):
-            text = truncate_words(normalize_for_vectorizer(row.text, replace_numbers=replace_numbers), MAX_WORDS)
+        for row_id, text in read_unlabeled_records(path, max_words=MAX_WORDS, replace_numbers=replace_numbers):
             norm = normalize_text(text)
             if norm in seen:
                 continue
             seen.add(norm)
-            rows.append((row.row_id, text))
+            rows.append((row_id, text))
             if max_rows and len(rows) >= max_rows:
                 return rows
     return rows
@@ -121,6 +121,7 @@ def main(argv=None):
         fixed_weights=fixed_weights,
         fixed_threshold=args.fixed_ensemble_threshold,
         pseudo_manifest_output=args.pseudo_manifest_output,
+        pseudo_manifest_input=args.pseudo_manifest_input,
     )
 
     probs = predict_component_proba(bundle, list(texts), 'ensemble')

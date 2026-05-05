@@ -6,9 +6,9 @@ from dataclasses import asdict
 from pathlib import Path
 
 from .config import EmbeddingConfig, LogisticConfig, MAX_WORDS, SelfTrainingConfig, VectorizerConfig
-from .data import read_examples, read_labeled_dataset
+from .data import read_labeled_dataset, read_unlabeled_records
 from .model import cross_validated_component_probs, fit_full_pipeline, metrics_at_threshold, save_bundle, search_weights_and_threshold
-from .text import normalize_for_vectorizer, normalize_text, truncate_words
+from .text import normalize_text
 
 
 def build_parser():
@@ -36,6 +36,7 @@ def build_parser():
     p.add_argument('--ssl-teacher-mode', choices=['tfidf', 'embedding'], default=None, help='Teacher used for rank-based SSL pseudo-labeling')
     p.add_argument('--ssl-teacher-embedding-model', default=None, help='Optional frozen embedding teacher for pseudo-label generation')
     p.add_argument('--pseudo-manifest-output', default=None, help='Optional CSV file of pseudo-labeled rows')
+    p.add_argument('--pseudo-manifest-input', default=None, help='Optional CSV manifest of precomputed pseudo-labeled rows')
     p.add_argument('--calibration-mode', action='store_true', help='Use a narrower calibration-only grid')
     return p
 
@@ -44,13 +45,12 @@ def _load_unlabeled(paths: list[str], max_rows: int = 0, replace_numbers: bool =
     rows: list[tuple[str, str]] = []
     seen: set[str] = set()
     for path in paths:
-        for row in read_examples(path):
-            text = truncate_words(normalize_for_vectorizer(row.text, replace_numbers=replace_numbers), MAX_WORDS)
+        for row_id, text in read_unlabeled_records(path, max_words=MAX_WORDS, replace_numbers=replace_numbers):
             norm = normalize_text(text)
             if norm in seen:
                 continue
             seen.add(norm)
-            rows.append((row.row_id, text))
+            rows.append((row_id, text))
             if max_rows and len(rows) >= max_rows:
                 return rows
     return rows
@@ -102,6 +102,10 @@ def main(argv=None):
     )
     teacher_cfg = EmbeddingConfig(model_name=args.ssl_teacher_embedding_model) if args.ssl_teacher_embedding_model else None
     embedding_cfg = None if args.no_embeddings else EmbeddingConfig(model_name=args.embedding_model)
+    pseudo_manifest_rows = None
+    if args.pseudo_manifest_input:
+        from .model import _read_pseudo_manifest
+        pseudo_manifest_rows = _read_pseudo_manifest(args.pseudo_manifest_input)
 
     results = []
     for name, vectorizer_cfg, logistic_cfg in _candidate_grid(args.replace_numbers, calibration_mode=args.calibration_mode):
@@ -115,6 +119,7 @@ def main(argv=None):
             teacher_mode=args.ssl_teacher_mode,
             teacher_cfg=teacher_cfg,
             logistic_cfg=logistic_cfg,
+            pseudo_manifest_rows=pseudo_manifest_rows,
         )
         best = search_weights_and_threshold(component_probs, labels, step=args.weight_step, threshold_step=args.threshold_step)
         component_metrics = {}
@@ -160,6 +165,7 @@ def main(argv=None):
             fixed_weights=best['weights'],
             threshold_step=args.threshold_step,
             pseudo_manifest_output=args.pseudo_manifest_output,
+            pseudo_manifest_input=args.pseudo_manifest_input,
         )
         save_bundle(bundle, args.model_output)
     return 0

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 from dataclasses import dataclass, field, asdict
 from itertools import product
 from pathlib import Path
@@ -369,6 +370,7 @@ def fit_self_training_tfidf(
     teacher_mode: str | None = None,
     teacher_cfg: EmbeddingConfig | None = None,
     pseudo_manifest: list[dict[str, Any]] | None = None,
+    pseudo_manifest_input: list[dict[str, Any]] | None = None,
 ) -> tuple[TfidfBinaryModel, SelfTrainingSummary]:
     vectorizer_cfg = vectorizer_cfg or VectorizerConfig()
     ssl_cfg = ssl_cfg or SelfTrainingConfig()
@@ -383,6 +385,34 @@ def fit_self_training_tfidf(
     combined_texts = list(gold_texts)
     combined_labels = list(gold_labels)
     sample_weight = _gold_sample_weights(len(gold_labels), ssl_cfg.gold_weight)
+    if pseudo_manifest_input:
+        pseudo_texts, pseudo_labels, pseudo_weights = _manifest_to_pseudo_examples(pseudo_manifest_input)
+        if pseudo_texts:
+            combined_texts.extend(pseudo_texts)
+            combined_labels.extend(pseudo_labels)
+            sample_weight.extend([ssl_cfg.pseudo_weight * float(w) for w in pseudo_weights])
+            summary.rounds_completed = 0
+            summary.pseudo_rows = len(pseudo_texts)
+            summary.pseudo_positive = int(sum(pseudo_labels))
+            summary.pseudo_negative = int(len(pseudo_labels) - sum(pseudo_labels))
+            summary.round_stats.append(
+                {
+                    'round': 0,
+                    'teacher': 'manifest',
+                    'candidate_positive': len([label for label in pseudo_labels if label == 1]),
+                    'candidate_negative': len([label for label in pseudo_labels if label == 0]),
+                    'accepted_positive': len([label for label in pseudo_labels if label == 1]),
+                    'accepted_negative': len([label for label in pseudo_labels if label == 0]),
+                    'accepted_total': len(pseudo_texts),
+                    'remaining_after_round': 0,
+                    'gold_weight': ssl_cfg.gold_weight,
+                    'pseudo_weight': ssl_cfg.pseudo_weight,
+                    'max_pseudo_per_class_per_round': ssl_cfg.max_pseudo_per_class_per_round,
+                }
+            )
+            model = fit_tfidf_model(combined_texts, combined_labels, vectorizer_cfg, sample_weight=sample_weight, logistic_cfg=logistic_cfg)
+            model.pseudo_rows = len(pseudo_texts)
+            return model, summary
     remaining_row_ids, remaining_texts = _coerce_unlabeled_records(unlabeled_texts)
     remaining_row_ids, remaining_texts = _dedupe_unlabeled_records(remaining_row_ids, remaining_texts)
     if not ssl_cfg.enabled or not remaining_texts:
@@ -568,6 +598,29 @@ def _write_pseudo_manifest(path: str | Path, rows: list[dict[str, Any]]) -> None
             writer.writerow({name: row.get(name) for name in fieldnames})
 
 
+def _read_pseudo_manifest(path: str | Path) -> list[dict[str, Any]]:
+    in_path = Path(path)
+    with in_path.open(newline='', encoding='utf-8') as f:
+        return list(csv.DictReader(f))
+
+
+def _manifest_to_pseudo_examples(rows: list[dict[str, Any]]) -> tuple[list[str], list[int], list[float]]:
+    texts: list[str] = []
+    labels: list[int] = []
+    weights: list[float] = []
+    seen: set[str] = set()
+    for row in rows:
+        text = str(row.get('text', ''))
+        norm = normalize_text(text)
+        if not text or norm in seen:
+            continue
+        seen.add(norm)
+        texts.append(text)
+        labels.append(int(float(row.get('label', 0))))
+        weights.append(float(row.get('weight', 0.2)))
+    return texts, labels, weights
+
+
 def fit_embedding_model(
     texts: list[str],
     labels: list[int],
@@ -733,6 +786,7 @@ def cross_validated_component_probs(
     teacher_mode: str | None = None,
     teacher_cfg: EmbeddingConfig | None = None,
     logistic_cfg: LogisticConfig | None = None,
+    pseudo_manifest_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, np.ndarray]:
     vectorizer_cfg = vectorizer_cfg or VectorizerConfig()
     ssl_cfg = ssl_cfg or SelfTrainingConfig()
@@ -767,6 +821,7 @@ def cross_validated_component_probs(
             logistic_cfg=logistic_cfg,
             teacher_mode=teacher_mode,
             teacher_cfg=teacher_cfg,
+            pseudo_manifest_input=pseudo_manifest_rows,
         )
         probs['baseline'][test_idx[0]] = float(baseline.predict_proba(test_text)[0])
         probs['ssl'][test_idx[0]] = float(ssl_model.predict_proba(test_text)[0])
@@ -796,10 +851,12 @@ def fit_full_pipeline(
     fixed_weights: dict[str, float] | None = None,
     fixed_threshold: float | None = None,
     pseudo_manifest_output: str | None = None,
+    pseudo_manifest_input: str | None = None,
 ) -> tuple[EnsembleBundle, dict[str, Any]]:
     vectorizer_cfg = vectorizer_cfg or VectorizerConfig()
     ssl_cfg = ssl_cfg or SelfTrainingConfig()
 
+    manifest_rows = _read_pseudo_manifest(pseudo_manifest_input) if pseudo_manifest_input else None
     component_probs = cross_validated_component_probs(
         gold_texts,
         gold_labels,
@@ -810,6 +867,7 @@ def fit_full_pipeline(
         teacher_mode=teacher_mode,
         teacher_cfg=teacher_cfg,
         logistic_cfg=logistic_cfg,
+        pseudo_manifest_rows=manifest_rows,
     )
     if fixed_weights and fixed_threshold is not None:
         labels_arr = np.asarray(gold_labels, dtype=int)
@@ -961,6 +1019,7 @@ def fit_full_pipeline(
             teacher_mode=teacher_mode,
             teacher_cfg=teacher_cfg,
             pseudo_manifest=pseudo_manifest if pseudo_manifest_output else None,
+            pseudo_manifest_input=manifest_rows,
         )
 
     embedding_model = (

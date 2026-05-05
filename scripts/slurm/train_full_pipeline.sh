@@ -26,6 +26,7 @@ TRAIN_CSV="${TRAIN_CSV:-$JOB_ROOT/data/raw/train_data-text_and_labels.csv}"
 NOTES_CSV_GZ="${NOTES_CSV_GZ:-$JOB_ROOT/data/raw/NOTEEVENTS.csv.gz}"
 UNLABELED_CSV="${UNLABELED_CSV:-$JOB_ROOT/data/processed/unlabeled_mimic.csv}"
 RUN_UNLABELED_CSV="${RUN_UNLABELED_CSV:-$RUN_DIR/data/processed/unlabeled_mimic.csv}"
+UNLABELED_CACHE="${UNLABELED_CACHE:-$JOB_ROOT/data/processed/unlabeled_sentences.parquet}"
 MODEL_OUT="${MODEL_OUT:-$RUN_DIR/models/model.joblib}"
 SUMMARY_OUT="${SUMMARY_OUT:-$RUN_DIR/models/training_summary.json}"
 SWEEP_OUT="${SWEEP_OUT:-$RUN_DIR/models/sweep_summary.json}"
@@ -49,6 +50,7 @@ SSL_TEACHER_MODEL="${SSL_TEACHER_MODEL:-}"
 EMBEDDING_MODEL="${EMBEDDING_MODEL:-$JOB_ROOT/models/pretrained/Bio_ClinicalBERT}"
 NO_EMBEDDINGS="${NO_EMBEDDINGS:-0}"
 PUBLISH_ROOT_OUTPUTS="${PUBLISH_ROOT_OUTPUTS:-0}"
+PSEUDO_MANIFEST_INPUT="${PSEUDO_MANIFEST_INPUT:-}"
 
 if [ "$SSL_TEACHER_MODE" = "embedding" ] && [ -z "$SSL_TEACHER_MODEL" ]; then
   SSL_TEACHER_MODEL="$EMBEDDING_MODEL"
@@ -90,19 +92,24 @@ except Exception as exc:
 PY
 fi
 
-log "preparing unlabeled pool"
-"$PYTHON" -m src.prepare_unlabeled \
-  --notes "$NOTES_CSV_GZ" \
-  --output "$RUN_UNLABELED_CSV" \
-  --max-sentences-per-note "$UNLABELED_PER_NOTE_LIMIT" \
-  --limit "$UNLABELED_LIMIT"
-log "prepared unlabeled pool at $RUN_UNLABELED_CSV"
+if [ ! -f "$UNLABELED_CACHE" ]; then
+  log "building unlabeled cache"
+  "$PYTHON" -m src.prepare_unlabeled \
+    --notes "$NOTES_CSV_GZ" \
+    --output "$UNLABELED_CACHE" \
+    --max-sentences-per-note "$UNLABELED_PER_NOTE_LIMIT" \
+    --limit "$UNLABELED_LIMIT" \
+    --candidate-cap "${UNLABELED_LIMIT:-0}"
+  log "built unlabeled cache at $UNLABELED_CACHE"
+else
+  log "using existing unlabeled cache at $UNLABELED_CACHE"
+fi
 
 if [ "$PIPELINE_MODE" = "compare" ]; then
   log "running compare training"
   TRAIN_ARGS=(
     --train "$TRAIN_CSV"
-    --unlabeled "$RUN_UNLABELED_CSV"
+    --unlabeled "$UNLABELED_CACHE"
     --output "$MODEL_OUT"
     --summary-output "$SUMMARY_OUT"
     --max-unlabeled "$MAX_UNLABELED"
@@ -117,6 +124,9 @@ if [ "$PIPELINE_MODE" = "compare" ]; then
     --fixed-ensemble-threshold "$FIXED_ENSEMBLE_THRESHOLD"
     --pseudo-manifest-output "$PSEUDO_MANIFEST_OUT"
   )
+  if [ -n "$PSEUDO_MANIFEST_INPUT" ]; then
+    TRAIN_ARGS=(--pseudo-manifest-input "$PSEUDO_MANIFEST_INPUT" "${TRAIN_ARGS[@]}")
+  fi
   if [ "$REPLACE_NUMBERS" != "0" ]; then
     TRAIN_ARGS=(--replace-numbers "${TRAIN_ARGS[@]}")
   fi
@@ -134,7 +144,7 @@ elif [ "$PIPELINE_MODE" = "calibrate" ]; then
   log "running calibration sweep"
   SWEEP_ARGS=(
     --train "$TRAIN_CSV"
-    --unlabeled "$RUN_UNLABELED_CSV"
+    --unlabeled "$UNLABELED_CACHE"
     --include-ssl
     --max-unlabeled "$MAX_UNLABELED"
     --weight-step "$WEIGHT_STEP"
@@ -151,6 +161,9 @@ elif [ "$PIPELINE_MODE" = "calibrate" ]; then
     --pseudo-manifest-output "$PSEUDO_MANIFEST_OUT"
     --calibration-mode
   )
+  if [ -n "$PSEUDO_MANIFEST_INPUT" ]; then
+    SWEEP_ARGS=(--pseudo-manifest-input "$PSEUDO_MANIFEST_INPUT" "${SWEEP_ARGS[@]}")
+  fi
   if [ "$REPLACE_NUMBERS" != "0" ]; then
     SWEEP_ARGS=(--replace-numbers "${SWEEP_ARGS[@]}")
   fi

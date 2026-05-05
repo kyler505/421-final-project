@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import argparse
-import csv
 from pathlib import Path
 
 from .mimic import iter_sentence_candidates
+from .unlabeled_cache import UnlabeledCandidate, filter_candidates, sentence_hash, write_cache
 
 
 def build_parser():
@@ -14,6 +14,7 @@ def build_parser():
     p.add_argument('--max-words', type=int, default=128)
     p.add_argument('--max-sentences-per-note', type=int, default=25, help='Optional cap on emitted sentences per note (0 = no cap)')
     p.add_argument('--limit', type=int, default=0, help='Optional cap on emitted rows (0 = no cap)')
+    p.add_argument('--candidate-cap', type=int, default=0, help='Optional cap on kept candidates after filtering')
     return p
 
 
@@ -22,19 +23,32 @@ def main(argv=None):
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     emitted = 0
-    with out_path.open('w', newline='', encoding='utf-8') as f:
-        writer = csv.writer(f, lineterminator='\n')
-        writer.writerow(['row_id', 'text'])
-        for note_id, sent in iter_sentence_candidates(
-            args.notes,
-            max_words=args.max_words,
-            max_sentences_per_note=args.max_sentences_per_note,
-        ):
-            writer.writerow([f'{note_id}:{emitted}', sent])
-            emitted += 1
-            if args.limit and emitted >= args.limit:
-                break
-    print(f'wrote {emitted} unlabeled candidates to {out_path}')
+    rows: list[UnlabeledCandidate] = []
+    for note_id, sent in iter_sentence_candidates(
+        args.notes,
+        max_words=args.max_words,
+        max_sentences_per_note=args.max_sentences_per_note,
+    ):
+        row_id = f'{note_id}:{emitted}'
+        rows.append(
+            UnlabeledCandidate(
+                row_id=row_id,
+                note_id=str(note_id),
+                sentence=sent,
+                sentence_hash=sentence_hash(sent),
+                word_count=len(sent.split()),
+            )
+        )
+        emitted += 1
+        if args.limit and emitted >= args.limit:
+            break
+    kept, dropped = filter_candidates(rows, per_note_cap=args.max_sentences_per_note, candidate_cap=args.candidate_cap)
+    write_cache(kept, out_path)
+    print(f'wrote {len(kept)} kept candidates to {out_path}')
+    if dropped:
+        audit_path = out_path.with_suffix('.audit.csv')
+        write_cache(dropped[:1000], audit_path)
+        print(f'wrote {len(dropped)} dropped-candidate samples to {audit_path}')
     return 0
 
 
