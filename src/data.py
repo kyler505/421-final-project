@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -19,6 +20,10 @@ class TextExample:
 def read_examples(path: str | Path) -> list[TextExample]:
     path = Path(path)
     with path.open(newline="", encoding="utf-8") as f:
+        try:
+            csv.field_size_limit(sys.maxsize)
+        except OverflowError:
+            csv.field_size_limit(2**31 - 1)
         reader = csv.DictReader(f)
         rows: list[TextExample] = []
         for row in reader:
