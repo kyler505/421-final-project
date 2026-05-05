@@ -25,6 +25,7 @@ RUN_DIR="${RUN_DIR:-$JOB_ROOT/runs/$RUN_TAG}"
 TRAIN_CSV="${TRAIN_CSV:-$JOB_ROOT/data/raw/train_data-text_and_labels.csv}"
 NOTES_CSV_GZ="${NOTES_CSV_GZ:-$JOB_ROOT/data/raw/NOTEEVENTS.csv.gz}"
 UNLABELED_CSV="${UNLABELED_CSV:-$JOB_ROOT/data/processed/unlabeled_mimic.csv}"
+RUN_UNLABELED_CSV="${RUN_UNLABELED_CSV:-$RUN_DIR/data/processed/unlabeled_mimic.csv}"
 MODEL_OUT="${MODEL_OUT:-$RUN_DIR/models/model.joblib}"
 SUMMARY_OUT="${SUMMARY_OUT:-$RUN_DIR/models/training_summary.json}"
 SWEEP_OUT="${SWEEP_OUT:-$RUN_DIR/models/sweep_summary.json}"
@@ -55,7 +56,7 @@ fi
 
 log "pipeline start mode=$PIPELINE_MODE teacher=$SSL_TEACHER_MODE run_tag=$RUN_TAG"
 log "run_dir=$RUN_DIR"
-mkdir -p "$JOB_ROOT/logs" "$JOB_ROOT/data/raw" "$JOB_ROOT/data/processed" "$JOB_ROOT/runs" "$RUN_DIR/models" "$PRED_DIR" "$DEBUG_DIR"
+mkdir -p "$JOB_ROOT/logs" "$JOB_ROOT/data/raw" "$JOB_ROOT/data/processed" "$JOB_ROOT/runs" "$RUN_DIR/models" "$RUN_DIR/data/processed" "$PRED_DIR" "$DEBUG_DIR"
 cd "$PROJECT_DIR"
 ln -sfn "$RUN_DIR" "$PROJECT_DIR/latest-run-$RUN_TAG"
 
@@ -76,16 +77,16 @@ PY
 log "preparing unlabeled pool"
 "$PYTHON" -m src.prepare_unlabeled \
   --notes "$NOTES_CSV_GZ" \
-  --output "$UNLABELED_CSV" \
+  --output "$RUN_UNLABELED_CSV" \
   --max-sentences-per-note "$UNLABELED_PER_NOTE_LIMIT" \
   --limit "$UNLABELED_LIMIT"
-log "prepared unlabeled pool at $UNLABELED_CSV"
+log "prepared unlabeled pool at $RUN_UNLABELED_CSV"
 
 if [ "$PIPELINE_MODE" = "compare" ]; then
   log "running compare training"
   TRAIN_ARGS=(
     --train "$TRAIN_CSV"
-    --unlabeled "$UNLABELED_CSV"
+    --unlabeled "$RUN_UNLABELED_CSV"
     --output "$MODEL_OUT"
     --summary-output "$SUMMARY_OUT"
     --max-unlabeled "$MAX_UNLABELED"
@@ -117,7 +118,7 @@ elif [ "$PIPELINE_MODE" = "calibrate" ]; then
   log "running calibration sweep"
   SWEEP_ARGS=(
     --train "$TRAIN_CSV"
-    --unlabeled "$UNLABELED_CSV"
+    --unlabeled "$RUN_UNLABELED_CSV"
     --include-ssl
     --max-unlabeled "$MAX_UNLABELED"
     --weight-step "$WEIGHT_STEP"
