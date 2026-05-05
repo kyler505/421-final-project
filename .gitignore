@@ -45,3 +45,15 @@ models/checkpoints/
 
 # Generated prediction/debug output
 outputs/
+
+# Reports
+report/*.pdf
+report/*.html
+report/*.png
+report/*.aux
+report/*.fdb_latexmk
+report/*.fls
+report/*.out
+!report/.gitkeep
+
+submission-cands/

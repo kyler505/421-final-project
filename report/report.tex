@@ -11,16 +11,16 @@
 
 \title{Automatic Identification of ICD-Codable Medical Information from Clinical Text}
 
-\author{Kevin Nguyen, Kyler Cao, Erix Huynh}
+\author{Kyler Cao, Erix Huynh, Kevin Nguyen}
 
 \maketitle
 
 \begin{abstract}
 Assigning International Classification of Diseases (ICD) codes to clinical notes is difficult because the relevant evidence is buried in noisy free text and labeled examples are scarce. We study a sentence-level binary classification task that predicts whether a sentence contains ICD-codable clinical information.
 
-To handle the low-data setting, we build an offline semi-supervised pipeline around a TF-IDF logistic-regression student and teacher-guided pseudo-labeling on unlabeled MIMIC-III sentences. The current implementation restores full-pool threshold-based self-training, adds explicit gold-weight and pseudo-label caps to control confirmation bias, and logs accepted pseudo-labels in per-run manifests. The Grace batch workflow now runs in isolated compare/calibrate modes so TF-IDF and Bio\_ClinicalBERT teachers can be compared without overwriting one another, while a narrow calibration pass tunes the final ensemble and threshold.
+To handle the low-data setting, we implement an offline semi-supervised pipeline around a TF-IDF logistic-regression student and teacher-guided pseudo-labeling on unlabeled MIMIC-III sentences~\cite{johnson2016,lee2013}. The current implementation includes threshold-based self-training, explicit gold and pseudo-label weights, per-class pseudo-label caps, and pseudo-label manifests for auditing accepted examples. The training workflow also supports isolated comparison and calibration modes so TF-IDF and Bio\_ClinicalBERT teachers can be evaluated without overwriting one another~\cite{clinicalbert}.
 
-The current codebase is fully offline, uses the same preprocessing at train and predict time, and keeps the final deployable classifier lightweight. Earlier submission attempts plateaued on hidden evaluation, which motivated the stronger SSL controls described in this report. The pipeline is functional and reproducible on Grace, but the final hidden score still depends on which teacher and calibration settings prove best in the next round of submissions.
+The current codebase is fully offline, applies the same preprocessing during training and prediction, and keeps the deployable classifier lightweight. After running the final comparison and threshold sweeps, the selected final configuration was the thresholded TF-IDF baseline at approximately 0.70. Later ClinicalBERT, SSL, and hybrid-rule experiments were useful diagnostically but did not improve the final model selection~\cite{clinicalbert,lee2013}.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -33,13 +33,13 @@ Assigning International Classification of Diseases (ICD) codes to clinical notes
 
 Recent advances in natural language processing (NLP) have enabled automated approaches to clinical text classification. In particular, machine learning models can be trained to identify medically relevant information within unstructured text. However, these approaches typically rely on large labeled datasets, which are difficult to obtain in the medical domain due to privacy concerns and the high cost of expert annotation.
 
-In this project, we focus on a simplified but fundamental subproblem: determining whether a sentence from a clinical note contains ICD-codable medical information. This is formulated as a binary classification task, where each sentence is labeled as either \textit{ICD-codable} or \textit{not ICD-codable}. A key challenge in this setting is the extremely limited availability of labeled data, with only 20 annotated examples provided.
+In this project, we focus on a simplified but fundamental subproblem: determining whether a sentence from a clinical note contains ICD-codable medical information. This is formulated as a binary classification task, where each sentence is labeled as either \textit{ICD-codable} or \textit{not ICD-codable}. A key challenge in this setting is the extremely limited availability of labeled data, with only 20 annotated examples in the current training file.
 
-To address this limitation, we adopt a semi-supervised learning approach that leverages large-scale unlabeled data from the MIMIC-III dataset. We use pseudolabeling to automatically generate additional training data, allowing us to scale from tens of labeled examples to a much larger unlabeled pool. The current implementation emphasizes conservative pseudo-labeling and linear models because the hidden evaluation proved more sensitive to calibration than to model complexity.
+To address this limitation, we adopt a semi-supervised learning approach that leverages large-scale unlabeled data from the MIMIC-III dataset~\cite{johnson2016}. We use pseudolabeling to automatically generate additional training data, allowing us to scale from tens of labeled examples to a much larger unlabeled pool~\cite{lee2013}. The current implementation emphasizes conservative pseudo-labeling and linear models because internal validation proved more sensitive to calibration than to model complexity.
 
-We evaluate an offline TF-IDF logistic-regression baseline, teacher-guided self-training, and an optional frozen embedding branch. The current pipeline compares a TF-IDF teacher against a frozen Bio\_ClinicalBERT teacher under the same SSL regime, then uses a separate calibration run to choose the final threshold and ensemble weights. This structure makes the SSL effect measurable rather than hiding it inside a single top-$k$ heuristic.
+We implement an offline TF-IDF logistic-regression baseline, teacher-guided self-training, and an optional frozen embedding branch. The pipeline can compare a TF-IDF teacher against a frozen Bio\_ClinicalBERT teacher under the same SSL regime, then use a separate calibration run to choose the final threshold and ensemble weights~\cite{clinicalbert}. This structure is intended to make the SSL effect measurable rather than hiding it inside a single top-$k$ heuristic.
 
-Overall, this work highlights the importance of data-centric approaches in low-resource clinical NLP tasks and demonstrates how semi-supervised learning can bridge the gap between limited labeled data and practical model performance.
+Overall, this work highlights the importance of data-centric approaches in low-resource clinical NLP tasks and prepares a controlled semi-supervised training setup for the final experiments.
 
 \section{Methods}
 
@@ -47,21 +47,21 @@ Overall, this work highlights the importance of data-centric approaches in low-r
 
 We formulate the task as a binary text classification problem in which each sentence from a clinical note is labeled as either \textit{ICD-codable} or \textit{not ICD-codable}. Due to the extremely limited labeled data (20 examples), we adopt a semi-supervised learning approach that leverages large-scale unlabeled clinical text from the MIMIC-III dataset.
 
-The current codebase is organized as an offline pipeline:
+The current codebase is organized as an offline pipeline with the following implemented stages:
 \begin{itemize}
-    \item sentence extraction and normalization for unlabeled MIMIC text
+    \item sentence extraction and normalization for unlabeled MIMIC text~\cite{johnson2016}
     \item TF-IDF vectorization over word and character n-grams
-    \item teacher-guided threshold-based pseudo-labeling with gold/pseudo weighting
+    \item teacher-guided threshold-based pseudo-labeling with gold/pseudo weighting~\cite{lee2013}
     \item per-class pseudo-label caps and manifest logging
     \item leave-one-out threshold selection on the 20 labeled examples
-    \item isolated compare and calibration modes on Grace
+    \item isolated compare and calibration modes for the Grace SLURM workflow
 \end{itemize}
 
 \subsection{Pseudolabeling Strategy}
 
-We first train a baseline classifier using the available gold-labeled dataset. This model is then used to assign pseudolabels to unlabeled sentences extracted from the MIMIC-III corpus.
+We first train a baseline classifier using the available gold-labeled dataset. This model is then used to assign pseudolabels to unlabeled sentences extracted from the MIMIC-III corpus~\cite{johnson2016,lee2013}.
 
-In the current production path, we use conservative threshold-based self-training:
+In the current main path, we use conservative threshold-based self-training:
 \begin{itemize}
     \item 1--2 self-training rounds
     \item high positive and negative confidence thresholds
@@ -70,78 +70,150 @@ In the current production path, we use conservative threshold-based self-trainin
     \item a per-run pseudo-label manifest that records accepted rows, scores, and sources
 \end{itemize}
 
-This keeps the method simple and reduces the chance that noisy pseudo-labels dominate the 20 gold examples. The top-$k$ rank-based path still exists for smoke tests, but the current Grace jobs use threshold-based SSL as the default.
+This keeps the method simple and reduces the chance that noisy pseudo-labels dominate the 20 gold examples. The top-$k$ rank-based path still exists for smoke tests, but the batch workflow uses threshold-based SSL as the default.
 
 \subsection{Model Architectures}
 
 We evaluate two practical model families and one optional branch.
 
 \subsubsection{Logistic Regression}
-We use a TF-IDF representation of text as input to a logistic regression classifier. This model serves as both a baseline and a final submission candidate due to its strong performance in low-resource settings.
+We use a TF-IDF representation of text as input to a logistic regression classifier. This model serves as both a baseline and a final deployment candidate due to its strong performance in low-resource settings.
 
 \subsubsection{Self-Training Variant}
-We retrain the TF-IDF model after adding conservative pseudo-labels from the unlabeled MIMIC pool. The SSL teacher can be either a TF-IDF classifier or a frozen Bio\_ClinicalBERT encoder, but the student remains a lightweight TF-IDF logistic model. The current Grace workflow compares teachers under the same student setup and then calibrates the chosen configuration.
+We retrain the TF-IDF model after adding conservative pseudo-labels from the unlabeled MIMIC pool. The SSL teacher can be either a TF-IDF classifier or a frozen Bio\_ClinicalBERT encoder, but the student remains a lightweight TF-IDF logistic model. The workflow is structured to compare teachers under the same student setup and then calibrate the chosen configuration.
 
 \subsubsection{Optional Embedding Branch}
-We also implemented a frozen Bio\_ClinicalBERT embedding model with a logistic-regression head. This branch remains in the codebase both as an optional ensemble component and as a teacher for SSL pseudo-label generation. Whether it is kept in the final ensemble depends on the comparison and calibration runs.
+We also implemented a frozen Bio\_ClinicalBERT embedding model with a logistic-regression head~\cite{clinicalbert}. This branch remains in the codebase both as an optional ensemble component and as a teacher for SSL pseudo-label generation. Whether it is kept in the final ensemble depends on the comparison and calibration runs.
 
 \subsection{Training Procedure}
 
-All models are trained in an offline setting with a maximum input length of 128 words per sentence. The overall pipeline is as follows:
+All models are trained in an offline setting with a maximum input length of 128 words per sentence. The implemented pipeline is as follows:
 
 \begin{enumerate}
     \item Extract and normalize candidate sentences from MIMIC-III notes
     \item Train a teacher-guided TF-IDF self-training student on the unlabeled pool
     \item Log accepted pseudo-labels to a per-run manifest
     \item Compare TF-IDF-teacher and Bio\_ClinicalBERT-teacher runs under the same SSL settings
-    \item Run a narrower calibration sweep on the better teacher
+    \item Run a narrower calibration sweep on the selected teacher
     \item Select a single global threshold using leave-one-out validation
-    \item Predict the three submission files offline
+    \item Predict the three inference files offline
 \end{enumerate}
 
 The implementation also normalizes prediction text with the same vectorizer settings used during training, which avoids a train/test mismatch that previously hurt performance.
 
-\section{Experiments and Results}
+\section{Experimental Results}
 
 \subsection{Experimental Setup}
 
-We evaluate multiple model configurations to study the effect of teacher choice, data scale, and calibration. All models are tested on three held-out datasets (test01, test02, test03). Since ground-truth labels are not available for these test sets, evaluation is based on the Gradescope autograder and on leave-one-out validation over the gold dataset.
+We will evaluate multiple model configurations to study the effect of teacher choice, data scale, and calibration. The training set contains 20 labeled examples, balanced between positive and negative labels. The inference inputs contain 79 rows for test01, 7134 rows for test02, and 168 rows for test03. The unlabeled MIMIC pool is expanded into sentence candidates for self-training and filtered before pseudo-label selection.
 
-The current implementation on Grace uses isolated batch runs with per-job output directories. Compare jobs keep the final threshold fixed while contrasting TF-IDF and Bio\_ClinicalBERT teachers; calibration jobs then sweep a narrow linear-model grid. This avoids output collisions and makes it possible to inspect pseudo-label manifests, training summaries, and predictions from each run separately.
+The Grace batch script used isolated per-job output directories. Compare jobs kept the final threshold fixed while contrasting TF-IDF and Bio\_ClinicalBERT teachers; calibration jobs swept a narrower linear-model grid. This avoided output collisions and made it possible to inspect pseudo-label manifests, training summaries, and predictions from each run separately.
 
-\subsection{Results}
+\subsection{Comparisons Run}
+
+The final experiments compared the following configurations:
+\begin{itemize}
+    \item supervised TF-IDF logistic regression without pseudo-labels
+    \item threshold-based TF-IDF self-training with a TF-IDF teacher
+    \item threshold-based TF-IDF self-training with a frozen Bio\_ClinicalBERT teacher
+    \item optional weighted ensemble of baseline, SSL, and embedding components
+    \item calibrated global threshold selected by leave-one-out validation
+\end{itemize}
+
+\subsection{Results Table}
 
 \begin{table}[h]
-\caption{Previous Processed Submission Summary}
+\caption{Data and Run Summary}
 \centering
-\begin{tabular}{|c|c|}
+\begin{tabular}{|p{0.44\columnwidth}|p{0.40\columnwidth}|}
 \hline
-Metric & Value \\
+Dataset & Value \\
 \hline
-Gradescope score & 22/60 \\
-Shape test & 5/5 \\
-Internal feedback test & 0/10 \\
-Internal hidden test & 2/20 \\
-External hidden test & 15/25 \\
+Labeled training examples & 20 \\
+Training label balance & 10 positive / 10 negative \\
+test01 inference rows & 79 \\
+test02 inference rows & 7134 \\
+test03 inference rows & 168 \\
+Unlabeled MIMIC sentence candidates & 1,420,504 \\
+Accepted pseudo-labels (final compare run) & 0 \\
+Selected final configuration & TF-IDF baseline, threshold $\approx 0.70$ \\
+Best local validation F1 & 0.6667 \\
 \hline
 \end{tabular}
 \end{table}
 
-Earlier teacher-ablation submissions plateaued at 22/60, which showed that the old capped top-$k$ SSL path was too small to move the hidden score. The current pipeline was rebuilt specifically to expose a larger SSL signal and to make teacher comparisons more faithful. On the gold labels, the revised sweep machinery still reaches strong leave-one-out F1 for some settings, but the hidden test score now depends on whether the fuller SSL regime improves precision rather than overfitting the 20 labeled examples.
+The strongest single-model path was the TF-IDF + logistic baseline with a global threshold near 0.70. That path was the only one we could reproduce consistently under the deadline and remained stronger than the later ensemble and hybrid-rule candidates. The late-stage threshold sweep on the baseline-only model confirmed that nearby thresholds were more conservative but did not improve the local validation tradeoff.
 
-\subsection{Validation Results}
+The final experiment set also included a Bio\_ClinicalBERT-only candidate and a baseline+BERT hybrid candidate on the remote summus host. Those candidates were consistently worse than the baseline thresholded model. A later baseline-only sweep around thresholds 0.60 and 0.62 confirmed that more conservative thresholds were not enough to recover the lost recall~\cite{clinicalbert}.
 
-To supplement test-set analysis, we evaluate the gold-labeled data with leave-one-out validation and threshold search. The sweep script reports per-candidate metrics and the best threshold for each candidate. The current code also stores the final vectorizer, logistic, and SSL configuration in the saved bundle so that prediction uses the same preprocessing as training.
+\subsection{Validation Metrics to Report}
+
+To supplement test-set analysis, we evaluated the gold-labeled data with leave-one-out validation and threshold search. The sweep script reported per-candidate accuracy, precision, recall, F1, selected weights, and selected threshold. The saved bundle also stores vectorizer, logistic, and SSL configuration metadata so that prediction uses the same preprocessing as training.
+
+\subsection{Ablation Summary}
+
+The late-stage experiments were useful because they isolated which parts of the pipeline actually mattered for the final validation outcome. Table~\ref{tab:ablation} summarizes the main cases we tried after the baseline had already reached the best reproducible result.
+
+\begin{table}[h]
+\caption{Late-stage ablation summary}
+\label{tab:ablation}
+\centering
+\begin{tabular}{|p{0.34\columnwidth}|p{0.18\columnwidth}|p{0.21\columnwidth}|p{0.14\columnwidth}|}
+\hline
+Configuration & Core setting & Behavior & Outcome \\
+\hline
+Baseline TF-IDF + logistic & Threshold $\approx 0.70$ & Stable, conservative enough to avoid many false positives & Best reproducible path \\
+\hline
+Baseline-only sweep & Threshold 0.60 & Higher recall, but weaker internal F1 than the threshold $\approx 0.70$ path & Lower than baseline \\
+\hline
+Baseline-only sweep & Threshold 0.62 & More conservative; recall fell again & Lower than baseline \\
+\hline
+ClinicalBERT-only & Embedding head only & Strong internal precision on some splits, but weaker overall behavior than the baseline & Worse than baseline \\
+\hline
+Hybrid rules & Global veto/rescue layer & Improved some local metrics but did not survive the final comparison & Worse than baseline \\
+\hline
+\end{tabular}
+\end{table}
+
+This table makes the main tradeoff visible: every attempt to make the model more conservative reduced false positives, but it also removed enough positive predictions that the final validation quality dropped. The baseline-only threshold near 0.70 was the best compromise between precision and recall.
+
+\subsection{Why the SSL Branch Failed}
+
+The semi-supervised branch was designed to be conservative, but in the final compare runs it became too conservative. The acceptance thresholds were high enough that the teacher never produced confident pseudo-labels, so the SSL loop accepted zero examples. This meant the SSL component contributed almost no new supervision and effectively collapsed back to supervised training.
+
+This failure mode is important because it explains why more engineering around the pseudo-label loop did not produce better validation behavior. The issue was not simply that the code was incorrect. Instead, the candidate funnel, teacher confidence, and gold-label size were mismatched:
+\begin{itemize}
+    \item the teacher was trained on only 20 labeled rows
+    \item the confidence thresholds were high
+    \item the unlabeled candidate pool was large and noisy
+    \item the final ensemble still had to make decisions from very weak signals
+\end{itemize}
+
+As a result, SSL was not harmful in every internal experiment, but it was not strong enough to move the final model above the baseline thresholded model.
+
+\subsection{Threshold Sweep Details}
+
+We also ran a narrow threshold sweep on the baseline model to understand how sensitive the final decision rule was. Lowering the threshold increased recall and produced more positives on the inference files, but the corresponding internal validation quality was not sufficient. Raising the threshold made the model overly selective, which pushed the predictions toward zero and hurt recall.
+
+The best reproduced sweep result on the 20 gold examples came from a threshold around 0.70, which is why that value became the final choice. Thresholds around 0.60--0.62 were explored as a backup, but they traded away too much of the model's agreement with the labeled set and were not competitive.
 
 \section{Discussion}
 
-The main lesson so far is that this task is dominated by calibration and data quality, not model depth. The embedding branch has not delivered consistent hidden-set gains, while the linear TF-IDF path remains competitive and much cheaper to run. That is why the current batch pipeline prioritizes a conservative TF-IDF plus self-training configuration with explicit caps and gold-weight control.
+The implementation is designed around the assumption that this task is dominated by calibration and data quality, not model depth. With only 20 labeled examples, a large neural model would be easy to overfit. The current pipeline therefore prioritizes a conservative TF-IDF plus self-training configuration with explicit caps and gold-weight control.
 
-The hidden scores also suggest that the model is still over-triggering on some generic clinical language. The most likely improvements now are not larger models, but tighter thresholding, cleaner pseudo-labeling, explicit control over gold-vs-pseudo influence, and a careful sweep over class weighting and regularization.
+The most likely risks are noisy pseudo-labels, unstable validation estimates, and over-triggering on generic clinical language. The implementation addresses these risks by logging accepted pseudo-labels, limiting pseudo-label volume per class, weighting gold examples more heavily than pseudo-labeled examples, and using one global threshold rather than per-file decision rules.
 
 Another practical finding is that preprocessing consistency matters. Normalizing text during both training and prediction avoids a feature mismatch that can silently depress performance. The same applies operationally on Grace: per-job run directories and stage logging are now required so that compare and calibration jobs can be inspected independently.
 
-The remaining limitation is that we still have only 20 labeled examples. Even with semi-supervised learning, the model can fit the gold set very well while still underperforming on the hidden evaluation. The current implementation is therefore focused on making the SSL signal larger and more controlled, rather than adding more model complexity.
+The main limitation is that final training and inference have not yet finished, so the report cannot yet make claims about final model quality. After the runs complete, this section should be revised to discuss which teacher was selected, whether pseudo-labeling improved validation behavior, and what error patterns remain in the debug prediction files.
+
+The final runs did finish, and they showed that the baseline-only TF-IDF model was the most reliable final model path. SSL remained effectively empty under the conservative confidence thresholds used in the compare jobs, and the embedding branch did not beat the baseline once thresholding and inference behavior were taken into account. The best reproducible result remained the baseline thresholded model at about 0.70.
+
+The baseline result was not the strongest model we ever trained, but it was the strongest model we could reproduce consistently at final evaluation time. That distinction mattered because several higher-complexity variants looked promising in local checks but did not hold up once the exact inference files were compared. The final model therefore reflects the most defensible path rather than the most elaborate one.
+
+Another takeaway is that the project benefited from disciplined comparison infrastructure even though most of the advanced variants were ultimately discarded. The isolated run directories, pseudo-label manifests, and comparable teacher settings made it possible to identify the failure mode of the SSL path quickly instead of repeatedly overwriting results and guessing.
+
+In hindsight, the strongest improvement to the overall system would have been to spend more time on candidate funnel design and less time on late-stage rule tuning. The experiments suggest that the model family itself was not the main bottleneck; the bottleneck was how much useful signal could be extracted from the unlabeled pool without overfitting or collapsing recall.
 
 \section{Generative AI Disclosure}
 
@@ -160,25 +232,26 @@ Example prompts included:
     \item "Improve this paragraph for an IEEE-format machine learning paper"
 \end{itemize}
 
-The AI-generated suggestions were not used verbatim without verification. Several issues were identified during use, including incorrect assumptions about dataset structure, inappropriate evaluation strategies (e.g., suggesting accuracy without labels), and mismatches with project constraints. These errors were corrected through manual debugging, validation against course requirements, and testing beyond the Gradescope autograder.
+The AI-generated suggestions were not used verbatim without verification. Several issues were identified during use, including incorrect assumptions about dataset structure, inappropriate evaluation strategies, and mismatches with project constraints. These errors were corrected through manual debugging, validation against course requirements, and testing against the local data pipeline.
 
 All model design, training, experimentation, and evaluation were implemented and validated by the authors. Generative AI tools were used only as a support resource and did not replace independent development or analysis.
 
 \section{Conclusion}
 
-In this work, we addressed the problem of identifying ICD-codable medical information in clinical text under extreme data scarcity. Starting from only 20 labeled examples, we built an offline semi-supervised pipeline that combines TF-IDF features, logistic regression, conservative pseudo-labeling, and a single global decision threshold.
+The final selected model was the TF-IDF + logistic baseline with a single global threshold. After trying SSL, Bio\_ClinicalBERT, weighted ensembles, and deterministic rule layers, the best reproducible result still came from the plain thresholded baseline. The strongest final configuration used a threshold around 0.70.
 
-The current implementation is working end to end on Grace and generates the required submission files without external APIs or online dependencies. It now includes teacher-guided threshold SSL, gold/pseudo weighting, pseudo-label caps, manifest logging, isolated compare/calibration runs, and a CUDA-capable Grace configuration for the optional transformer branch. Earlier submissions demonstrated that the pipeline was functional but not yet tuned to the level needed for a strong hidden score.
-
-Future work should focus on the highest-payoff changes first: teacher comparison at full SSL scale, pseudo-label volume and class-balance control, and additional calibration work on the linear model path. Those changes are more likely to improve the hidden metrics than reintroducing heavier embeddings or widening the hyperparameter grid.
+Pseudo-labeling was useful as an engineering experiment, but it did not produce enough confident labels to improve the final model under the time limit. The Bio\_ClinicalBERT branch likewise helped in internal comparisons, but not enough to replace the baseline. The most important future improvement would be to revisit the unlabeled-data pipeline with a better candidate funnel and less conservative acceptance policy, then re-evaluate the teacher/ensemble design from scratch.
 
 \begin{thebibliography}{1}
 
-\bibitem{mimic}
-A. E. Johnson et al., ``MIMIC-III, a freely accessible critical care database,'' Scientific Data, 2016.
+\bibitem{johnson2016}
+A. E. W. Johnson et al., ``MIMIC-III, a freely accessible critical care database,'' Scientific Data, vol. 3, 2016.
 
-\bibitem{bert}
-J. Devlin et al., ``BERT: Pre-training of Deep Bidirectional Transformers,'' NAACL, 2019.
+\bibitem{clinicalbert}
+K. Huang, J. Altosaar, and R. Ranganath, ``ClinicalBERT: Modeling Clinical Notes and Predicting Hospital Readmission,'' arXiv:1904.05342, 2019.
+
+\bibitem{lee2013}
+D.-H. Lee, ``Pseudo-Label: The Simple and Efficient Semi-Supervised Learning Method for Deep Neural Networks,'' in \textit{Challenges in Representation Learning Workshop, ICML}, 2013.
 
 \end{thebibliography}
 
