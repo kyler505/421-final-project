@@ -10,7 +10,7 @@ from scipy.sparse import hstack
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
-from sklearn.model_selection import LeaveOneOut
+from sklearn.model_selection import KFold, LeaveOneOut
 
 from .config import DEFAULT_THRESHOLD, RANDOM_STATE, EmbeddingConfig, LogisticConfig, SelfTrainingConfig, VectorizerConfig
 from .embeddings import get_embedding_encoder
@@ -482,7 +482,13 @@ def cross_validated_component_probs(
 ) -> dict[str, np.ndarray]:
     vectorizer_cfg = vectorizer_cfg or VectorizerConfig()
     ssl_cfg = ssl_cfg or SelfTrainingConfig()
-    loo = LeaveOneOut()
+    
+    # Use KFold if dataset is large, otherwise LeaveOneOut
+    if len(gold_texts) > 100:
+        cv = KFold(n_splits=5, shuffle=True, random_state=RANDOM_STATE)
+    else:
+        cv = LeaveOneOut()
+        
     labels_arr = np.asarray(gold_labels, dtype=int)
     probs = {
         'baseline': np.zeros(len(gold_texts), dtype=float),
@@ -491,17 +497,26 @@ def cross_validated_component_probs(
     use_embedding = embedding_cfg is not None
     if use_embedding:
         probs['embedding'] = np.zeros(len(gold_texts), dtype=float)
-    for train_idx, test_idx in loo.split(gold_texts):
+    for train_idx, test_idx in cv.split(gold_texts):
         train_texts = [gold_texts[i] for i in train_idx]
         train_labels = [int(labels_arr[i]) for i in train_idx]
-        test_text = [gold_texts[test_idx[0]]]
+        test_texts = [gold_texts[i] for i in test_idx]
+        
         baseline = fit_tfidf_model(train_texts, train_labels, vectorizer_cfg, logistic_cfg=logistic_cfg)
         ssl_model, _ = fit_self_training_tfidf(train_texts, train_labels, unlabeled_texts, vectorizer_cfg, ssl_cfg, logistic_cfg=logistic_cfg)
-        probs['baseline'][test_idx[0]] = float(baseline.predict_proba(test_text)[0])
-        probs['ssl'][test_idx[0]] = float(ssl_model.predict_proba(test_text)[0])
+        
+        batch_baseline = baseline.predict_proba(test_texts)
+        batch_ssl = ssl_model.predict_proba(test_texts)
+        
+        for i, idx in enumerate(test_idx):
+            probs['baseline'][idx] = float(batch_baseline[i])
+            probs['ssl'][idx] = float(batch_ssl[i])
+            
         if use_embedding:
             embedding_model = fit_embedding_model(train_texts, train_labels, embedding_cfg)
-            probs['embedding'][test_idx[0]] = float(embedding_model.predict_proba(test_text)[0])
+            batch_emb = embedding_model.predict_proba(test_texts)
+            for i, idx in enumerate(test_idx):
+                probs['embedding'][idx] = float(batch_emb[i])
     return probs
 
 
