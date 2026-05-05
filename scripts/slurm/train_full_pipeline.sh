@@ -11,6 +11,10 @@
 
 set -euo pipefail
 
+log() {
+  printf '[%s] %s\n' "$(date '+%F %T')" "$*"
+}
+
 PROJECT_DIR="${PROJECT_DIR:-${SCRATCH:?SCRATCH is not set}/csce421-final-project}"
 PIPELINE_MODE="${PIPELINE_MODE:-compare}"
 SSL_TEACHER_MODE="${SSL_TEACHER_MODE:-tfidf}"
@@ -48,6 +52,8 @@ if [ "$SSL_TEACHER_MODE" = "embedding" ] && [ -z "$SSL_TEACHER_MODEL" ]; then
   SSL_TEACHER_MODEL="$EMBEDDING_MODEL"
 fi
 
+log "pipeline start mode=$PIPELINE_MODE teacher=$SSL_TEACHER_MODE run_tag=$RUN_TAG"
+log "run_dir=$RUN_DIR"
 mkdir -p "$PROJECT_DIR/logs" "$PROJECT_DIR/models" "$PROJECT_DIR/outputs" "$PROJECT_DIR/data/processed" "$RUN_DIR/models" "$PRED_DIR" "$DEBUG_DIR"
 cd "$PROJECT_DIR"
 ln -sfn "$RUN_DIR" "$PROJECT_DIR/latest-run-$RUN_TAG"
@@ -57,20 +63,25 @@ module load GCC/12.3.0 OpenMPI/4.1.5
 if [ -n "$SSL_TEACHER_MODEL" ] || [ "$NO_EMBEDDINGS" = "0" ]; then
   module load PyTorch/2.1.2-CUDA-12.1.1 Transformers/4.39.3
 fi
+log "modules loaded"
 
 PYTHON="${PYTHON:-python}"
+log "checking sklearn runtime"
 "$PYTHON" - <<'PY'
 import sklearn
 print("sklearn", sklearn.__version__)
 PY
 
+log "preparing unlabeled pool"
 "$PYTHON" -m src.prepare_unlabeled \
   --notes "$NOTES_CSV_GZ" \
   --output "$UNLABELED_CSV" \
   --max-sentences-per-note "$UNLABELED_PER_NOTE_LIMIT" \
   --limit "$UNLABELED_LIMIT"
+log "prepared unlabeled pool at $UNLABELED_CSV"
 
 if [ "$PIPELINE_MODE" = "compare" ]; then
+  log "running compare training"
   TRAIN_ARGS=(
     --train "$TRAIN_CSV"
     --unlabeled "$UNLABELED_CSV"
@@ -100,7 +111,9 @@ if [ "$PIPELINE_MODE" = "compare" ]; then
     TRAIN_ARGS=(--ssl-teacher-embedding-model "$SSL_TEACHER_MODEL" "${TRAIN_ARGS[@]}")
   fi
   "$PYTHON" -m src.train "${TRAIN_ARGS[@]}"
+  log "compare training finished"
 elif [ "$PIPELINE_MODE" = "calibrate" ]; then
+  log "running calibration sweep"
   SWEEP_ARGS=(
     --train "$TRAIN_CSV"
     --unlabeled "$UNLABELED_CSV"
@@ -133,11 +146,13 @@ elif [ "$PIPELINE_MODE" = "calibrate" ]; then
   fi
   "$PYTHON" -m src.sweep "${SWEEP_ARGS[@]}"
   cp "$SWEEP_OUT" "$SUMMARY_OUT"
+  log "calibration sweep finished"
 else
   echo "Unknown PIPELINE_MODE: $PIPELINE_MODE" >&2
   exit 2
 fi
 
+log "writing predictions"
 for split in test01 test02 test03; do
   pred_out="$PRED_DIR/${split}-pred.csv"
   debug_out="$DEBUG_DIR/${split}-debug.csv"
@@ -147,8 +162,10 @@ for split in test01 test02 test03; do
     --output "$pred_out" \
     --debug-output "$debug_out"
 done
+log "predictions finished"
 
 if [ "$PUBLISH_ROOT_OUTPUTS" != "0" ]; then
+  log "publishing root outputs"
   for split in test01 test02 test03; do
     cp "$PRED_DIR/${split}-pred.csv" "$PROJECT_DIR/${split}-pred.csv"
     cp "$DEBUG_DIR/${split}-debug.csv" "$PROJECT_DIR/outputs/${split}-debug.csv"
@@ -156,3 +173,4 @@ if [ "$PUBLISH_ROOT_OUTPUTS" != "0" ]; then
   cp "$SUMMARY_OUT" "$PROJECT_DIR/models/training_summary.json"
   cp "$MODEL_OUT" "$PROJECT_DIR/models/model.joblib"
 fi
+log "pipeline complete"
