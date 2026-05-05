@@ -57,6 +57,19 @@ The current codebase is organized as an offline pipeline with the following impl
     \item isolated compare and calibration modes for the Grace SLURM workflow
 \end{itemize}
 
+\begin{figure}[h]
+\centering
+\fbox{\parbox{0.92\columnwidth}{
+\centering
+\small
+MIMIC sentences $\rightarrow$ text normalization $\rightarrow$ TF-IDF baseline
+$\rightarrow$ teacher confidence filter $\rightarrow$ weighted retraining
+$\rightarrow$ LOOCV threshold selection $\rightarrow$ offline CSV predictions
+}}
+\caption{Offline training and prediction workflow. The same normalization and vectorizer metadata are reused at inference time so that prediction does not diverge from training.}
+\label{fig:pipeline}
+\end{figure}
+
 \subsection{Pseudolabeling Strategy}
 
 We first train a baseline classifier using the available gold-labeled dataset. This model is then used to assign pseudolabels to unlabeled sentences extracted from the MIMIC-III corpus~\cite{johnson2016,lee2013}.
@@ -105,7 +118,7 @@ The implementation also normalizes prediction text with the same vectorizer sett
 
 \subsection{Experimental Setup}
 
-We will evaluate multiple model configurations to study the effect of teacher choice, data scale, and calibration. The training set contains 20 labeled examples, balanced between positive and negative labels. The inference inputs contain 79 rows for test01, 7134 rows for test02, and 168 rows for test03. The unlabeled MIMIC pool is expanded into sentence candidates for self-training and filtered before pseudo-label selection.
+We evaluated multiple model configurations to study the effect of teacher choice, data scale, and calibration. The training set contains 20 labeled examples, balanced between positive and negative labels. The inference inputs contain 79 rows for test01, 7134 rows for test02, and 168 rows for test03. The unlabeled MIMIC pool was expanded into sentence candidates for self-training and filtered before pseudo-label selection.
 
 The Grace batch script used isolated per-job output directories. Compare jobs kept the final threshold fixed while contrasting TF-IDF and Bio\_ClinicalBERT teachers; calibration jobs swept a narrower linear-model grid. This avoided output collisions and made it possible to inspect pseudo-label manifests, training summaries, and predictions from each run separately.
 
@@ -146,7 +159,7 @@ The strongest single-model path was the TF-IDF + logistic baseline with a global
 
 The final experiment set also included a Bio\_ClinicalBERT-only candidate and a baseline+BERT hybrid candidate on the remote summus host. Those candidates were consistently worse than the baseline thresholded model. A later baseline-only sweep around thresholds 0.60 and 0.62 confirmed that more conservative thresholds were not enough to recover the lost recall~\cite{clinicalbert}.
 
-\subsection{Validation Metrics to Report}
+\subsection{Validation Metrics}
 
 To supplement test-set analysis, we evaluated the gold-labeled data with leave-one-out validation and threshold search. The sweep script reported per-candidate accuracy, precision, recall, F1, selected weights, and selected threshold. The saved bundle also stores vectorizer, logistic, and SSL configuration metadata so that prediction uses the same preprocessing as training.
 
@@ -158,7 +171,9 @@ The late-stage experiments were useful because they isolated which parts of the 
 \caption{Late-stage ablation summary}
 \label{tab:ablation}
 \centering
-\begin{tabular}{|p{0.34\columnwidth}|p{0.18\columnwidth}|p{0.21\columnwidth}|p{0.14\columnwidth}|}
+\scriptsize
+\setlength{\tabcolsep}{2pt}
+\begin{tabular}{|p{0.30\columnwidth}|p{0.16\columnwidth}|p{0.22\columnwidth}|p{0.13\columnwidth}|}
 \hline
 Configuration & Core setting & Behavior & Outcome \\
 \hline
@@ -205,8 +220,6 @@ The most likely risks are noisy pseudo-labels, unstable validation estimates, an
 
 Another practical finding is that preprocessing consistency matters. Normalizing text during both training and prediction avoids a feature mismatch that can silently depress performance. The same applies operationally on Grace: per-job run directories and stage logging are now required so that compare and calibration jobs can be inspected independently.
 
-The main limitation is that final training and inference have not yet finished, so the report cannot yet make claims about final model quality. After the runs complete, this section should be revised to discuss which teacher was selected, whether pseudo-labeling improved validation behavior, and what error patterns remain in the debug prediction files.
-
 The final runs did finish, and they showed that the baseline-only TF-IDF model was the most reliable final model path. SSL remained effectively empty under the conservative confidence thresholds used in the compare jobs, and the embedding branch did not beat the baseline once thresholding and inference behavior were taken into account. The best reproducible result remained the baseline thresholded model at about 0.70.
 
 The baseline result was not the strongest model we ever trained, but it was the strongest model we could reproduce consistently at final evaluation time. That distinction mattered because several higher-complexity variants looked promising in local checks but did not hold up once the exact inference files were compared. The final model therefore reflects the most defensible path rather than the most elaborate one.
@@ -232,15 +245,18 @@ Example prompts included:
     \item "Improve this paragraph for an IEEE-format machine learning paper"
 \end{itemize}
 
-The AI-generated suggestions were not used verbatim without verification. Several issues were identified during use, including incorrect assumptions about dataset structure, inappropriate evaluation strategies, and mismatches with project constraints. These errors were corrected through manual debugging, validation against course requirements, and testing against the local data pipeline.
 
-All model design, training, experimentation, and evaluation were implemented and validated by the authors. Generative AI tools were used only as a support resource and did not replace independent development or analysis.
+AI-generated suggestions were reviewed and adapted rather than used directly. As is common when applying general-purpose tools to specific projects, some suggestions required adjustment; for instance, assumptions about dataset structure, evaluation strategies, or project constraints occasionally needed correction. These were addressed through standard debugging and validation practices.
+Generative AI tools served as a supplementary resource throughout the development process.
+
 
 \section{Conclusion}
 
 The final selected model was the TF-IDF + logistic baseline with a single global threshold. After trying SSL, Bio\_ClinicalBERT, weighted ensembles, and deterministic rule layers, the best reproducible result still came from the plain thresholded baseline. The strongest final configuration used a threshold around 0.70.
 
 Pseudo-labeling was useful as an engineering experiment, but it did not produce enough confident labels to improve the final model under the time limit. The Bio\_ClinicalBERT branch likewise helped in internal comparisons, but not enough to replace the baseline. The most important future improvement would be to revisit the unlabeled-data pipeline with a better candidate funnel and less conservative acceptance policy, then re-evaluate the teacher/ensemble design from scratch.
+
+Team contributions were divided across implementation, experimentation, and presentation work. Kyler Cao focused on the end-to-end training and prediction pipeline, threshold sweeps, and final result analysis. Erix Huynh focused on data preparation, method documentation, and report organization. Kevin Nguyen focused on motivation, discussion, presentation structure, and final communication of limitations and takeaways.
 
 \begin{thebibliography}{1}
 
