@@ -5,7 +5,7 @@ import json
 from dataclasses import asdict
 from pathlib import Path
 
-from .config import LogisticConfig, MAX_WORDS, SelfTrainingConfig, VectorizerConfig
+from .config import EmbeddingConfig, LogisticConfig, MAX_WORDS, SelfTrainingConfig, VectorizerConfig
 from .data import read_examples, read_labeled_dataset
 from .model import cross_validated_component_probs, fit_full_pipeline, metrics_at_threshold, save_bundle, search_weights_and_threshold
 from .text import deduplicate_texts, normalize_for_vectorizer, truncate_words
@@ -29,6 +29,7 @@ def build_parser():
     p.add_argument('--ssl-rank-mode', action='store_true', help='Use rank-based pseudo-labeling when embeddings are enabled')
     p.add_argument('--ssl-rank-top-k', type=int, default=20, help='Top-K for rank-based pseudo-labeling')
     p.add_argument('--ssl-max-pool', type=int, default=500, help='Max unlabeled pool for rank-based pseudo-labeling')
+    p.add_argument('--ssl-teacher-embedding-model', default=None, help='Optional frozen embedding teacher for pseudo-label generation')
     return p
 
 
@@ -77,6 +78,7 @@ def main(argv=None):
         rank_top_k=args.ssl_rank_top_k,
         max_pool=args.ssl_max_pool,
     )
+    teacher_cfg = EmbeddingConfig(model_name=args.ssl_teacher_embedding_model) if args.ssl_teacher_embedding_model else None
 
     results = []
     for name, vectorizer_cfg, logistic_cfg in _candidate_grid(args.replace_numbers):
@@ -87,6 +89,7 @@ def main(argv=None):
             vectorizer_cfg=vectorizer_cfg,
             ssl_cfg=ssl_cfg,
             embedding_cfg=None,
+            teacher_cfg=teacher_cfg,
             logistic_cfg=logistic_cfg,
         )
         best = search_weights_and_threshold(component_probs, labels, step=args.weight_step, threshold_step=args.threshold_step)
@@ -127,6 +130,7 @@ def main(argv=None):
             vectorizer_cfg=VectorizerConfig(**best['vectorizer_cfg']),
             ssl_cfg=ssl_cfg,
             embedding_cfg=None,
+            teacher_cfg=teacher_cfg,
             logistic_cfg=LogisticConfig(**best['logistic_cfg']),
             fixed_weights=best['weights'],
             threshold_step=args.threshold_step,

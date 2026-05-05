@@ -278,6 +278,7 @@ def fit_self_training_tfidf(
     vectorizer_cfg: VectorizerConfig | None = None,
     ssl_cfg: SelfTrainingConfig | None = None,
     logistic_cfg: LogisticConfig | None = None,
+    teacher_cfg: EmbeddingConfig | None = None,
 ) -> tuple[TfidfBinaryModel, SelfTrainingSummary]:
     vectorizer_cfg = vectorizer_cfg or VectorizerConfig()
     ssl_cfg = ssl_cfg or SelfTrainingConfig()
@@ -291,6 +292,28 @@ def fit_self_training_tfidf(
         model = fit_tfidf_model(combined_texts, combined_labels, vectorizer_cfg, sample_weight=sample_weight, logistic_cfg=logistic_cfg)
         model.pseudo_rows = 0
         return model, summary
+
+    if ssl_cfg.rank_mode and teacher_cfg is not None:
+        teacher_model = fit_embedding_model(gold_texts, gold_labels, teacher_cfg)
+        pseudo_texts, pseudo_labels, pseudo_weights = _rank_based_pseudo_labels(
+            teacher_model,
+            remaining,
+            top_k=ssl_cfg.rank_top_k,
+        )
+        if not pseudo_texts:
+            model = fit_tfidf_model(combined_texts, combined_labels, vectorizer_cfg, sample_weight=sample_weight, logistic_cfg=logistic_cfg)
+            model.pseudo_rows = 0
+            return model, summary
+        combined_texts.extend(pseudo_texts)
+        combined_labels.extend(pseudo_labels)
+        sample_weight.extend([ssl_cfg.pseudo_weight * float(w) for w in pseudo_weights])
+        summary.rounds_completed = 1
+        summary.pseudo_rows = len(pseudo_texts)
+        summary.pseudo_positive = int(sum(pseudo_labels))
+        summary.pseudo_negative = int(len(pseudo_labels) - sum(pseudo_labels))
+        final_model = fit_tfidf_model(combined_texts, combined_labels, vectorizer_cfg, sample_weight=sample_weight, logistic_cfg=logistic_cfg)
+        final_model.pseudo_rows = summary.pseudo_rows
+        return final_model, summary
 
     for round_idx in range(ssl_cfg.rounds):
         current_model = fit_tfidf_model(combined_texts, combined_labels, vectorizer_cfg, sample_weight=sample_weight, logistic_cfg=logistic_cfg)
@@ -478,6 +501,7 @@ def cross_validated_component_probs(
     vectorizer_cfg: VectorizerConfig | None = None,
     ssl_cfg: SelfTrainingConfig | None = None,
     embedding_cfg: EmbeddingConfig | None = None,
+    teacher_cfg: EmbeddingConfig | None = None,
     logistic_cfg: LogisticConfig | None = None,
 ) -> dict[str, np.ndarray]:
     vectorizer_cfg = vectorizer_cfg or VectorizerConfig()
@@ -496,7 +520,15 @@ def cross_validated_component_probs(
         train_labels = [int(labels_arr[i]) for i in train_idx]
         test_text = [gold_texts[test_idx[0]]]
         baseline = fit_tfidf_model(train_texts, train_labels, vectorizer_cfg, logistic_cfg=logistic_cfg)
-        ssl_model, _ = fit_self_training_tfidf(train_texts, train_labels, unlabeled_texts, vectorizer_cfg, ssl_cfg, logistic_cfg=logistic_cfg)
+        ssl_model, _ = fit_self_training_tfidf(
+            train_texts,
+            train_labels,
+            unlabeled_texts,
+            vectorizer_cfg,
+            ssl_cfg,
+            logistic_cfg=logistic_cfg,
+            teacher_cfg=teacher_cfg,
+        )
         probs['baseline'][test_idx[0]] = float(baseline.predict_proba(test_text)[0])
         probs['ssl'][test_idx[0]] = float(ssl_model.predict_proba(test_text)[0])
         if use_embedding:
@@ -512,6 +544,7 @@ def fit_full_pipeline(
     vectorizer_cfg: VectorizerConfig | None = None,
     ssl_cfg: SelfTrainingConfig | None = None,
     embedding_cfg: EmbeddingConfig | None = None,
+    teacher_cfg: EmbeddingConfig | None = None,
     logistic_cfg: LogisticConfig | None = None,
     weight_step: float = 0.1,
     threshold_step: float = 0.01,
@@ -527,6 +560,7 @@ def fit_full_pipeline(
         vectorizer_cfg=vectorizer_cfg,
         ssl_cfg=ssl_cfg,
         embedding_cfg=embedding_cfg,
+        teacher_cfg=teacher_cfg,
         logistic_cfg=logistic_cfg,
     )
     if fixed_weights:
@@ -562,7 +596,40 @@ def fit_full_pipeline(
         confidence_positive=ssl_cfg.positive_confidence,
         confidence_negative=ssl_cfg.negative_confidence,
     )
-    if ssl_cfg.enabled and ssl_cfg.rank_mode and unlabeled_texts and embedding_cfg is not None:
+    if ssl_cfg.enabled and ssl_cfg.rank_mode and unlabeled_texts and teacher_cfg is not None:
+        pseudo_texts, pseudo_labels, pseudo_weights = _rank_based_pseudo_labels(
+            fit_embedding_model(gold_texts, gold_labels, teacher_cfg),
+            unlabeled_texts,
+            top_k=ssl_cfg.rank_top_k,
+        )
+        if pseudo_texts:
+            ssl_summary.rounds_completed = 1
+            ssl_summary.pseudo_rows = len(pseudo_texts)
+            ssl_summary.pseudo_positive = sum(1 for l in pseudo_labels if l == 1)
+            ssl_summary.pseudo_negative = sum(1 for l in pseudo_labels if l == 0)
+            combined_texts = list(gold_texts) + pseudo_texts
+            combined_labels = list(gold_labels) + pseudo_labels
+            combined_weights = [1.0] * len(gold_labels) + [ssl_cfg.pseudo_weight * float(w) for w in pseudo_weights]
+            ssl_model = fit_tfidf_model(
+                combined_texts,
+                combined_labels,
+                vectorizer_cfg,
+                sample_weight=combined_weights,
+                logistic_cfg=logistic_cfg,
+            )
+            ssl_model.pseudo_rows = len(pseudo_texts)
+        else:
+            ssl_model, ssl_summary2 = fit_self_training_tfidf(
+                gold_texts,
+                gold_labels,
+                unlabeled_texts,
+                vectorizer_cfg,
+                ssl_cfg,
+                logistic_cfg=logistic_cfg,
+                teacher_cfg=teacher_cfg,
+            )
+            ssl_summary = ssl_summary2
+    elif ssl_cfg.enabled and ssl_cfg.rank_mode and unlabeled_texts and embedding_cfg is not None:
         pseudo_texts, pseudo_labels, pseudo_weights = _similarity_based_pseudo_labels(
             gold_texts,
             gold_labels,
@@ -589,10 +656,26 @@ def fit_full_pipeline(
             )
             ssl_model.pseudo_rows = len(pseudo_texts)
         else:
-            ssl_model, ssl_summary2 = fit_self_training_tfidf(gold_texts, gold_labels, unlabeled_texts, vectorizer_cfg, ssl_cfg, logistic_cfg=logistic_cfg)
+            ssl_model, ssl_summary2 = fit_self_training_tfidf(
+                gold_texts,
+                gold_labels,
+                unlabeled_texts,
+                vectorizer_cfg,
+                ssl_cfg,
+                logistic_cfg=logistic_cfg,
+                teacher_cfg=teacher_cfg,
+            )
             ssl_summary = ssl_summary2
     else:
-        ssl_model, ssl_summary = fit_self_training_tfidf(gold_texts, gold_labels, unlabeled_texts, vectorizer_cfg, ssl_cfg, logistic_cfg=logistic_cfg)
+        ssl_model, ssl_summary = fit_self_training_tfidf(
+            gold_texts,
+            gold_labels,
+            unlabeled_texts,
+            vectorizer_cfg,
+            ssl_cfg,
+            logistic_cfg=logistic_cfg,
+            teacher_cfg=teacher_cfg,
+        )
 
     embedding_model = fit_embedding_model(gold_texts, gold_labels, embedding_cfg) if embedding_cfg is not None else None
 
@@ -607,6 +690,7 @@ def fit_full_pipeline(
             'ssl_cfg': asdict(ssl_cfg),
             'logistic_cfg': asdict(logistic_cfg or LogisticConfig()),
             'embedding_cfg': asdict(embedding_cfg) if embedding_cfg is not None else None,
+            'teacher_cfg': asdict(teacher_cfg) if teacher_cfg is not None else None,
             'cv_metrics': {
                 'f1': best.f1,
                 'accuracy': best.accuracy,
@@ -633,6 +717,7 @@ def fit_full_pipeline(
         'vectorizer_cfg': asdict(vectorizer_cfg),
         'logistic_cfg': asdict(logistic_cfg or LogisticConfig()),
         'embedding_cfg': asdict(embedding_cfg) if embedding_cfg is not None else None,
+        'teacher_cfg': asdict(teacher_cfg) if teacher_cfg is not None else None,
     }
     return bundle, report
 

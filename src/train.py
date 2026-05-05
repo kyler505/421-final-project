@@ -37,6 +37,7 @@ def build_parser():
     p.add_argument('--ssl-rank-mode', action='store_true', help='Use rank-based pseudo-labeling when embeddings are enabled')
     p.add_argument('--ssl-rank-top-k', type=int, default=20, help='Top-K for rank-based pseudo-labeling')
     p.add_argument('--ssl-max-pool', type=int, default=500, help='Max unlabeled pool for rank-based pseudo-labeling')
+    p.add_argument('--ssl-teacher-embedding-model', default=None, help='Optional frozen embedding teacher for pseudo-label generation')
     p.add_argument('--fixed-plan-weights', action='store_true', help='Use the plan weights: baseline=.5 ssl=.3 embedding=.2')
     return p
 
@@ -78,6 +79,7 @@ def main(argv=None):
         rank_top_k=args.ssl_rank_top_k,
         max_pool=args.ssl_max_pool,
     )
+    teacher_cfg = EmbeddingConfig(model_name=args.ssl_teacher_embedding_model) if args.ssl_teacher_embedding_model else None
     embedding_cfg = None if args.no_embeddings else EmbeddingConfig(model_name=args.embedding_model)
     logistic_cfg = LogisticConfig(
         c=args.logistic_c,
@@ -98,6 +100,7 @@ def main(argv=None):
         vectorizer_cfg=VectorizerConfig(replace_numbers=args.replace_numbers),
         ssl_cfg=ssl_cfg,
         embedding_cfg=embedding_cfg,
+        teacher_cfg=teacher_cfg,
         logistic_cfg=logistic_cfg,
         weight_step=args.weight_step,
         threshold_step=args.threshold_step,

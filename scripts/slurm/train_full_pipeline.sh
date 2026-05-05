@@ -28,12 +28,16 @@ SSL_POSITIVE_CONFIDENCE="${SSL_POSITIVE_CONFIDENCE:-0.95}"
 SSL_NEGATIVE_CONFIDENCE="${SSL_NEGATIVE_CONFIDENCE:-0.05}"
 SSL_PSEUDO_WEIGHT="${SSL_PSEUDO_WEIGHT:-0.2}"
 SSL_RANK_MODE="${SSL_RANK_MODE:-0}"
+SSL_TEACHER_MODEL="${SSL_TEACHER_MODEL:-}"
 
 mkdir -p "$PROJECT_DIR/logs" "$PROJECT_DIR/models" "$PROJECT_DIR/outputs" "$PROJECT_DIR/data/processed"
 cd "$PROJECT_DIR"
 
 module purge
 module load GCC/13.3.0 OpenMPI/5.0.3 scikit-learn/1.6.1
+if [ -n "$SSL_TEACHER_MODEL" ]; then
+  module load PyTorch/2.6.0 Transformers/4.55.0
+fi
 
 PYTHON="${PYTHON:-python}"
 "$PYTHON" - <<'PY'
@@ -65,6 +69,9 @@ if [ "$REPLACE_NUMBERS" != "0" ]; then
 fi
 if [ "$SSL_RANK_MODE" != "0" ]; then
   SWEEP_ARGS=(--ssl-rank-mode "${SWEEP_ARGS[@]}")
+fi
+if [ -n "$SSL_TEACHER_MODEL" ]; then
+  SWEEP_ARGS=(--ssl-teacher-embedding-model "$SSL_TEACHER_MODEL" "${SWEEP_ARGS[@]}")
 fi
 "$PYTHON" -m src.sweep "${SWEEP_ARGS[@]}"
 cp "$SWEEP_OUT" "$SUMMARY_OUT"
