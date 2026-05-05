@@ -1,0 +1,27 @@
+{
+  "component_names": [
+    "baseline",
+    "ssl",
+    "embedding"
+  ],
+  "cv_metrics": {
+    "accuracy": 0.75,
+    "f1": 0.8,
+    "precision": 0.6666666666666666,
+    "recall": 1.0
+  },
+  "ssl_summary": {
+    "confidence_negative": 0.1,
+    "confidence_positive": 0.9,
+    "pseudo_negative": 20,
+    "pseudo_positive": 20,
+    "pseudo_rows": 40,
+    "rounds_completed": 1
+  },
+  "threshold": 0.49000000000000005,
+  "weights": {
+    "baseline": 0.0,
+    "embedding": 1.0,
+    "ssl": 0.0
+  }
+}

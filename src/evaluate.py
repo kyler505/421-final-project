@@ -1,73 +1,58 @@
-"""Evaluation script for models on a labeled test set."""
-
 from __future__ import annotations
 
 import argparse
 import json
-import sys
-from pathlib import Path
 
-from src.data import get_texts_labels, load_train_data
-from src.eval_metrics import binary_classification_metrics
-from src.models.baseline import BaselineModel
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, f1_score, precision_score, recall_score
 
-
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Evaluate a model on a labeled test set")
-    parser.add_argument("--model", required=True, help="Model path (pickle or directory)")
-    parser.add_argument("--input", required=True, help="Labeled test CSV path")
-    parser.add_argument(
-        "--mode",
-        "--backend",
-        choices=["baseline", "transformer", "svm"],
-        required=True,
-        dest="backend",
-        help="Model backend (alias: --backend). Public contract: only these values are supported.",
-    )
-    parser.add_argument("--output", default=None, help="Output JSON path for metrics")
-    return parser.parse_args()
+from .config import MAX_WORDS
+from .data import read_labeled_dataset
+from .model import load_bundle, predict_component_proba
 
 
-def main() -> None:
-    args = parse_args()
-
-    input_path = Path(args.input)
-    model_path = Path(args.model)
-    if not input_path.exists():
-        print(f"Error: input file not found: {input_path}", file=sys.stderr)
-        sys.exit(1)
-    if not model_path.exists():
-        print(f"Error: model path not found: {model_path}", file=sys.stderr)
-        sys.exit(1)
-
-    # load_train_data handles labeled CSVs
-    df = load_train_data(input_path)
-    texts, labels = get_texts_labels(df)
-
-    if args.backend == "baseline":
-        model = BaselineModel.load(model_path)
-        predictions = model.predict(texts)
-    elif args.backend == "svm":
-        from src.models.svm import SVMModel
-        model = SVMModel.load(model_path)
-        predictions = model.predict(texts)
-    else:
-        from src.models.transformer import TransformerClassifier
-        model = TransformerClassifier(model_name=str(model_path))
-        predictions = model.predict(texts)
-
-    metrics = binary_classification_metrics(labels, predictions)
-
-    print(f"\n--- Metrics for {args.backend} model on {input_path.name} ---")
-    for k, v in metrics.items():
-        print(f"{k}: {v:.4f}")
-
-    if args.output:
-        out_path = Path(args.output)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
-        print(f"Saved metrics to {args.output}")
+def build_parser():
+    p = argparse.ArgumentParser(description='Evaluate ICD-codable model')
+    p.add_argument('--model', required=True, help='Path to saved model bundle (.joblib)')
+    p.add_argument('--data', required=True, help='Path to labeled data CSV')
+    p.add_argument('--component', choices=['ensemble', 'baseline', 'ssl', 'embedding'], default='ensemble', help='Which component to score')
+    p.add_argument('--all-components', action='store_true', help='Also print component-by-component metrics')
+    return p
 
 
-if __name__ == "__main__":
-    main()
+def _score_component(bundle, texts, labels, component, threshold=None):
+    probs = predict_component_proba(bundle, texts, component)
+    thresh = bundle.threshold if threshold is None else threshold
+    preds = (probs >= thresh).astype(int)
+    return {
+        'component': component,
+        'threshold': float(thresh),
+        'accuracy': float(accuracy_score(labels, preds)),
+        'precision': float(precision_score(labels, preds, zero_division=0)),
+        'recall': float(recall_score(labels, preds, zero_division=0)),
+        'f1': float(f1_score(labels, preds, zero_division=0)),
+        'confusion_matrix': confusion_matrix(labels, preds).tolist(),
+    }
+
+
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    bundle = load_bundle(args.model)
+    labeled = read_labeled_dataset(args.data, max_words=MAX_WORDS)
+    _, texts, labels = zip(*labeled)
+    texts = list(texts)
+    labels = list(labels)
+
+    result = _score_component(bundle, texts, labels, args.component)
+    print(json.dumps(result, indent=2, sort_keys=True))
+    print(classification_report(labels, (predict_component_proba(bundle, texts, args.component) >= result['threshold']).astype(int), digits=4, zero_division=0))
+
+    if args.all_components:
+        print('--- all components ---')
+        for name in bundle.component_names():
+            comp = _score_component(bundle, texts, labels, name)
+            print(json.dumps(comp, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())

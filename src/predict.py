@@ -1,126 +1,48 @@
-"""Prediction script supporting both baseline and transformer modes."""
-
 from __future__ import annotations
 
 import argparse
-import sys
+import csv
 from pathlib import Path
 
-from src.config import get_config
-from src.data import get_row_ids, get_texts, load_test_data
-from src.models.baseline import BaselineModel
-from src.contracts import ARTIFACT_KIND_BASELINE, ARTIFACT_KIND_TRANSFORMER
-from src.manifest import RunManifest, save_run_manifest
-from src.utils import save_debug_predictions, save_submission_predictions
+from .data import read_examples
+from .model import load_bundle, predict_component_proba
+from .text import has_strong_negation
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run inference on test data")
-    parser.add_argument("--model", required=True, help="Model path (pickle or directory)")
-    parser.add_argument("--input", required=True, help="Input test CSV path")
-    parser.add_argument("--output", default=None, help="Output predictions CSV path")
-    parser.add_argument(
-        "--mode",
-        "--backend",
-        choices=["baseline", "transformer", "svm"],
-        required=True,
-        dest="backend",
-        help="Model backend (alias: --backend). Public contract: only these values are supported.",
-    )
-    parser.add_argument("--max_length", type=int, default=None, help="Max sequence length")
-    parser.add_argument(
-        "--probabilities",
-        action="store_true",
-        help="Include positive-class probabilities in a debug CSV",
-    )
-    parser.add_argument(
-        "--debug-output",
-        default=None,
-        help="Optional debug CSV path with row_id,text,prediction[,probability]",
-    )
-    parser.add_argument(
-        "--write-manifest",
-        default=None,
-        help="Optional path to write a JSON run manifest for this inference run",
-    )
-    return parser.parse_args()
+def build_parser():
+    p = argparse.ArgumentParser(description='Predict ICD-codable labels')
+    p.add_argument('--model', required=True, help='Path to saved model bundle (.joblib)')
+    p.add_argument('--input', required=True, help='Path to input CSV with row_id,text')
+    p.add_argument('--output', required=True, help='Path to output CSV')
+    p.add_argument('--threshold', type=float, default=None, help='Override model threshold')
+    p.add_argument('--component', choices=['ensemble', 'baseline', 'ssl', 'embedding'], default='ensemble', help='Which component to use for prediction')
+    p.add_argument('--negation-filter', action='store_true', help='Convert predictions to 0 for sentences with strong negation')
+    return p
 
 
-def main() -> None:
-    args = parse_args()
-    config = get_config()
-
-    input_path = Path(args.input)
-    model_path = Path(args.model)
-    if not input_path.exists():
-        print(f"Error: input file not found: {input_path}", file=sys.stderr)
-        sys.exit(1)
-    if not model_path.exists():
-        print(f"Error: model path not found: {model_path}", file=sys.stderr)
-        sys.exit(1)
-
-    test_df = load_test_data(input_path)
-    row_ids = get_row_ids(test_df)
-    texts = get_texts(test_df)
-    probs = None
-
-    if args.backend == "baseline":
-        model = BaselineModel.load(model_path)
-        predictions = model.predict(texts)
-        if args.probabilities:
-            probs = model.predict_proba(texts)[:, 1].tolist()
-        artifact_kind = ARTIFACT_KIND_BASELINE
-    elif args.backend == "svm":
-        from src.models.svm import SVMModel
-        model = SVMModel.load(model_path)
-        predictions = model.predict(texts)
-        if args.probabilities:
-            probs = model.predict_proba(texts)[:, 1].tolist()
-        artifact_kind = ARTIFACT_KIND_BASELINE
-    else:
-        from src.models.transformer import TransformerClassifier
-
-        model = TransformerClassifier(
-            model_name=str(model_path),
-            max_length=args.max_length or config.max_length,
-        )
-        predictions = model.predict(texts)
-        if args.probabilities:
-            probs = model.predict_proba(texts)[:, 1].tolist()
-        artifact_kind = ARTIFACT_KIND_TRANSFORMER
-
-    output_path = Path(args.output) if args.output else config.predictions_path
-    save_submission_predictions(row_ids=row_ids, predictions=predictions.tolist(), output_path=output_path)
-
-    if args.debug_output:
-        save_debug_predictions(
-            row_ids=row_ids,
-            texts=texts,
-            predictions=predictions.tolist(),
-            output_path=args.debug_output,
-            probs=probs,
-        )
-
-    if args.write_manifest:
-        max_len = args.max_length or config.max_length
-        manifest = RunManifest(
-            backend=args.backend,
-            artifact_kind=artifact_kind,
-            pretrained_source=str(model_path),
-            checkpoint_dir=str(model_path),
-            train_path="",
-            max_length=max_len,
-            truncation_policy="hf_max_length_tokens",
-            hyperparams={"input_csv": str(input_path), "output_csv": str(output_path)},
-        )
-        save_run_manifest(manifest, Path(args.write_manifest))
-
-    positives = int(predictions.sum())
-    print(f"Saved submission predictions to {output_path}")
-    if args.debug_output:
-        print(f"Saved debug predictions to {args.debug_output}")
-    print(f"Positive predictions: {positives}/{len(predictions)}")
+def main(argv=None):
+    args = build_parser().parse_args(argv)
+    bundle = load_bundle(args.model)
+    threshold = bundle.threshold if args.threshold is None else args.threshold
+    rows = read_examples(args.input)
+    texts = [r.text for r in rows]
+    row_ids = [r.row_id for r in rows]
+    probs = predict_component_proba(bundle, texts, args.component)
+    preds = [1 if p >= threshold else 0 for p in probs]
+    if args.negation_filter:
+        negated = sum(1 for t in texts if has_strong_negation(t))
+        preds = [0 if has_strong_negation(t) else p for t, p in zip(texts, preds)]
+        print(f'negation filter: {negated}/{len(texts)} predictions flipped')
+    out_path = Path(args.output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with out_path.open('w', newline='', encoding='utf-8') as f:
+        writer = csv.writer(f, lineterminator='\n')
+        writer.writerow(['row_id', 'prediction'])
+        for row_id, pred in zip(row_ids, preds):
+            writer.writerow([row_id, pred])
+    print(f'wrote {len(preds)} predictions to {out_path}')
+    return 0
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == '__main__':
+    raise SystemExit(main())
