@@ -74,6 +74,22 @@ import sklearn
 print("sklearn", sklearn.__version__)
 PY
 
+if [ "$NO_EMBEDDINGS" = "0" ] || [ -n "$SSL_TEACHER_MODEL" ]; then
+  log "checking cuda runtime"
+  "$PYTHON" - <<'PY'
+try:
+    import torch
+    print("torch", torch.__version__)
+    print("torch_cuda", torch.version.cuda)
+    print("cuda_available", torch.cuda.is_available())
+    print("cuda_device_count", torch.cuda.device_count())
+    if torch.cuda.is_available():
+        print("cuda_device_name", torch.cuda.get_device_name(0))
+except Exception as exc:
+    print(type(exc).__name__, exc)
+PY
+fi
+
 log "preparing unlabeled pool"
 "$PYTHON" -m src.prepare_unlabeled \
   --notes "$NOTES_CSV_GZ" \
