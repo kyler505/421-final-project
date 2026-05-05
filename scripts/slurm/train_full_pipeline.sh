@@ -29,13 +29,15 @@ SSL_NEGATIVE_CONFIDENCE="${SSL_NEGATIVE_CONFIDENCE:-0.05}"
 SSL_PSEUDO_WEIGHT="${SSL_PSEUDO_WEIGHT:-0.2}"
 SSL_RANK_MODE="${SSL_RANK_MODE:-0}"
 SSL_TEACHER_MODEL="${SSL_TEACHER_MODEL:-}"
+EMBEDDING_MODEL="${EMBEDDING_MODEL:-}"
+NO_EMBEDDINGS="${NO_EMBEDDINGS:-0}"
 
 mkdir -p "$PROJECT_DIR/logs" "$PROJECT_DIR/models" "$PROJECT_DIR/outputs" "$PROJECT_DIR/data/processed"
 cd "$PROJECT_DIR"
 
 module purge
 module load GCC/13.3.0 OpenMPI/5.0.3 scikit-learn/1.6.1
-if [ -n "$SSL_TEACHER_MODEL" ]; then
+if [ -n "$SSL_TEACHER_MODEL" ] || [ "$NO_EMBEDDINGS" = "0" ]; then
   module load PyTorch/2.6.0 Transformers/4.55.0
 fi
 
@@ -69,6 +71,13 @@ if [ "$REPLACE_NUMBERS" != "0" ]; then
 fi
 if [ "$SSL_RANK_MODE" != "0" ]; then
   SWEEP_ARGS=(--ssl-rank-mode "${SWEEP_ARGS[@]}")
+fi
+if [ "$NO_EMBEDDINGS" = "0" ]; then
+  if [ -n "$EMBEDDING_MODEL" ]; then
+    SWEEP_ARGS=(--embedding-model "$EMBEDDING_MODEL" "${SWEEP_ARGS[@]}")
+  fi
+else
+  SWEEP_ARGS=(--no-embeddings "${SWEEP_ARGS[@]}")
 fi
 if [ -n "$SSL_TEACHER_MODEL" ]; then
   SWEEP_ARGS=(--ssl-teacher-embedding-model "$SSL_TEACHER_MODEL" "${SWEEP_ARGS[@]}")

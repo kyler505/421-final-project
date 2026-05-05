@@ -19,6 +19,8 @@ def build_parser():
     p.add_argument('--model-output', default=None, help='Optional path to save the best trained bundle')
     p.add_argument('--max-unlabeled', type=int, default=0, help='Optional cap on unlabeled rows')
     p.add_argument('--replace-numbers', action='store_true')
+    p.add_argument('--embedding-model', default=EmbeddingConfig().model_name, help='Local/offline embedding model name or path')
+    p.add_argument('--no-embeddings', action='store_true', help='Disable embedding model in the final ensemble')
     p.add_argument('--include-ssl', action='store_true', help='Include SSL component candidates')
     p.add_argument('--weight-step', type=float, default=0.1)
     p.add_argument('--threshold-step', type=float, default=0.01)
@@ -79,6 +81,7 @@ def main(argv=None):
         max_pool=args.ssl_max_pool,
     )
     teacher_cfg = EmbeddingConfig(model_name=args.ssl_teacher_embedding_model) if args.ssl_teacher_embedding_model else None
+    embedding_cfg = None if args.no_embeddings else EmbeddingConfig(model_name=args.embedding_model)
 
     results = []
     for name, vectorizer_cfg, logistic_cfg in _candidate_grid(args.replace_numbers):
@@ -88,7 +91,7 @@ def main(argv=None):
             unlabeled if unlabeled else None,
             vectorizer_cfg=vectorizer_cfg,
             ssl_cfg=ssl_cfg,
-            embedding_cfg=None,
+            embedding_cfg=embedding_cfg,
             teacher_cfg=teacher_cfg,
             logistic_cfg=logistic_cfg,
         )
@@ -129,7 +132,7 @@ def main(argv=None):
             unlabeled_texts=unlabeled if unlabeled else None,
             vectorizer_cfg=VectorizerConfig(**best['vectorizer_cfg']),
             ssl_cfg=ssl_cfg,
-            embedding_cfg=None,
+            embedding_cfg=embedding_cfg,
             teacher_cfg=teacher_cfg,
             logistic_cfg=LogisticConfig(**best['logistic_cfg']),
             fixed_weights=best['weights'],
