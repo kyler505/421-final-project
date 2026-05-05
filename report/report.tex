@@ -1,0 +1,183 @@
+\documentclass[journal]{IEEEtran}
+
+\usepackage{cite}
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{url}
+
+\hyphenation{op-tical net-works semi-conduc-tor}
+
+\begin{document}
+
+\title{Automatic Identification of ICD-Codable Medical Information from Clinical Text}
+
+\author{Kevin Nguyen, Kyler Cao, Erix Huynh}
+
+\maketitle
+
+\begin{abstract}
+Assigning International Classification of Diseases (ICD) codes to clinical notes is difficult because the relevant evidence is buried in noisy free text and labeled examples are scarce. We study a sentence-level binary classification task that predicts whether a sentence contains ICD-codable clinical information.
+
+To handle the low-data setting, we build an offline semi-supervised pipeline around a TF-IDF logistic-regression baseline and high-confidence self-training on unlabeled MIMIC-III sentences. The system normalizes and truncates input text, sweeps a small set of linear-model hyperparameters, and selects a global threshold using leave-one-out validation on the 20 labeled examples. We also implemented an optional frozen Bio\_ClinicalBERT embedding branch, but the faster production path used for grading relies on the TF-IDF plus self-training ensemble because it is simpler and cheaper to run.
+
+On Gradescope, the current processed submission scores 29/60 overall. The shape check is correct, but hidden-set accuracy and F1 remain the main bottlenecks. The current results show that the pipeline is functional and offline-compatible, but it still needs further tuning to improve hidden performance.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Clinical NLP, Semi-Supervised Learning, Pseudolabeling, ICD Coding, Text Classification, MIMIC-III, Machine Learning
+\end{IEEEkeywords}
+
+\section{Introduction}
+
+Assigning International Classification of Diseases (ICD) codes to clinical notes is a fundamental task in healthcare systems, supporting billing, clinical research, and large-scale data analysis. Traditionally, this process is performed manually by trained professionals who review clinical text and determine appropriate codes. This workflow is time-consuming, expensive, and subject to variability across annotators.
+
+Recent advances in natural language processing (NLP) have enabled automated approaches to clinical text classification. In particular, machine learning models can be trained to identify medically relevant information within unstructured text. However, these approaches typically rely on large labeled datasets, which are difficult to obtain in the medical domain due to privacy concerns and the high cost of expert annotation.
+
+In this project, we focus on a simplified but fundamental subproblem: determining whether a sentence from a clinical note contains ICD-codable medical information. This is formulated as a binary classification task, where each sentence is labeled as either \textit{ICD-codable} or \textit{not ICD-codable}. A key challenge in this setting is the extremely limited availability of labeled data, with only 20 annotated examples provided.
+
+To address this limitation, we adopt a semi-supervised learning approach that leverages large-scale unlabeled data from the MIMIC-III dataset. We use pseudolabeling to automatically generate additional training data, allowing us to scale from tens of labeled examples to a much larger unlabeled pool. The current implementation emphasizes conservative pseudo-labeling and linear models because the hidden evaluation proved more sensitive to calibration than to model complexity.
+
+We evaluate an offline TF-IDF logistic-regression baseline, a self-training variant, and an optional frozen embedding branch. In practice, the strongest and fastest path so far is the linear TF-IDF plus self-training setup, which is easier to deploy on Grace and easier to reason about than a fully fine-tuned transformer.
+
+Overall, this work highlights the importance of data-centric approaches in low-resource clinical NLP tasks and demonstrates how semi-supervised learning can bridge the gap between limited labeled data and practical model performance.
+
+\section{Methods}
+
+\subsection{Overview}
+
+We formulate the task as a binary text classification problem in which each sentence from a clinical note is labeled as either \textit{ICD-codable} or \textit{not ICD-codable}. Due to the extremely limited labeled data (20 examples), we adopt a semi-supervised learning approach that leverages large-scale unlabeled clinical text from the MIMIC-III dataset.
+
+The current codebase is organized as an offline pipeline:
+\begin{itemize}
+    \item sentence extraction and normalization for unlabeled MIMIC text
+    \item TF-IDF vectorization over word and character n-grams
+    \item logistic regression with a small hyperparameter sweep
+    \item conservative pseudo-labeling on unlabeled text
+    \item leave-one-out threshold selection on the 20 labeled examples
+\end{itemize}
+
+\subsection{Pseudolabeling Strategy}
+
+We first train a baseline classifier using the available gold-labeled dataset. This model is then used to assign pseudolabels to unlabeled sentences extracted from the MIMIC-III corpus.
+
+In the current fast path, we use conservative self-training:
+\begin{itemize}
+    \item one self-training round
+    \item high confidence thresholds for pseudo-label acceptance
+    \item lower sample weight for pseudo-labeled examples than gold labels
+\end{itemize}
+
+This keeps the method simple and reduces the chance that noisy pseudo-labels dominate the 20 gold examples.
+
+\subsection{Model Architectures}
+
+We evaluate two practical model families and one optional branch.
+
+\subsubsection{Logistic Regression}
+We use a TF-IDF representation of text as input to a logistic regression classifier. This model serves as both a baseline and a final submission candidate due to its strong performance in low-resource settings.
+
+\subsubsection{Self-Training Variant}
+We retrain the TF-IDF model after adding conservative pseudo-labels from the unlabeled MIMIC pool. In the final Slurm configuration, this is the main model selection path.
+
+\subsubsection{Optional Embedding Branch}
+We also implemented a frozen Bio\_ClinicalBERT embedding model with a logistic-regression head. This branch remains in the codebase for comparison, but the faster grading path disables it because it did not justify its runtime cost in the latest runs.
+
+\subsection{Training Procedure}
+
+All models are trained in an offline setting with a maximum input length of 128 words per sentence. The overall pipeline is as follows:
+
+\begin{enumerate}
+    \item Extract and normalize candidate sentences from MIMIC-III notes
+    \item Train TF-IDF logistic-regression models on the 20 gold labels
+    \item Generate conservative pseudo-labels on the unlabeled pool
+    \item Sweep a small set of TF-IDF and logistic-regression hyperparameters
+    \item Select a single global threshold using leave-one-out validation
+    \item Predict the three submission files offline
+\end{enumerate}
+
+The implementation also normalizes prediction text with the same vectorizer settings used during training, which avoids a train/test mismatch that previously hurt performance.
+
+\section{Experiments and Results}
+
+\subsection{Experimental Setup}
+
+We evaluate multiple model configurations to study the effect of data quality, scale, and model choice. All models are tested on three held-out datasets (test01, test02, test03). Since ground-truth labels are not available for these test sets, evaluation is based on the Gradescope autograder and on leave-one-out validation over the gold dataset.
+
+The current implementation on Grace uses a fast TF-IDF plus self-training path with no embedding model. The Slurm job extracts unlabeled sentences, sweeps a small hyperparameter grid, saves the best model, and writes prediction files for the three submission splits.
+
+\subsection{Results}
+
+\begin{table}[h]
+\caption{Current Results Summary}
+\centering
+\begin{tabular}{|c|c|}
+\hline
+Metric & Value \\
+\hline
+Gradescope score & 29/60 \\
+Shape test & 5/5 \\
+Internal feedback test & 0/10 \\
+Internal hidden test & 8/20 \\
+External hidden test & 16/25 \\
+\hline
+\end{tabular}
+\end{table}
+
+The latest processed Gradescope submission scored 29/60. The output shape is correct, but the internal and external hidden metrics remain below the threshold needed for full credit. The feedback run reported accuracy of 0.6203 and F1 of 0.4231 on its internal sample, which suggests that the classifier is still missing important boundary cases.
+
+On the gold labels, the current sweep machinery can reach roughly 0.80 F1 in leave-one-out validation for some settings, but that performance does not transfer cleanly to the hidden test sets. This is consistent with a small-data regime where thresholding, pseudo-label quality, and preprocessing details matter as much as the model family.
+
+\subsection{Validation Results}
+
+To supplement test-set analysis, we evaluate the gold-labeled data with leave-one-out validation and threshold search. The sweep script reports per-candidate metrics and the best threshold for each candidate. The current code also stores the final vectorizer, logistic, and SSL configuration in the saved bundle so that prediction uses the same preprocessing as training.
+
+\section{Discussion}
+
+The main lesson so far is that this task is dominated by calibration and data quality, not model depth. The embedding branch has not delivered consistent hidden-set gains, while the linear TF-IDF path remains competitive and much cheaper to run. That is why the current batch pipeline prioritizes a conservative TF-IDF plus self-training configuration.
+
+The hidden scores also suggest that the model is still over-triggering on some generic clinical language. The most likely improvements now are not larger models, but tighter thresholding, cleaner pseudo-labeling, and a careful sweep over class weighting and regularization.
+
+Another practical finding is that preprocessing consistency matters. Normalizing text during both training and prediction avoids a feature mismatch that can silently depress performance. That fix is already in the codebase.
+
+The remaining limitation is that we still have only 20 labeled examples. Even with semi-supervised learning, the model can fit the gold set very well while still underperforming on the hidden evaluation. The current 29/60 submission confirms that the pipeline is functional but not yet tuned enough for the grader.
+
+\section{Generative AI Disclosure}
+
+Generative AI tools (e.g., ChatGPT) were used as a supplementary aid during this project. These tools were utilized for:
+
+\begin{itemize}
+    \item Debugging environment and dependency issues (e.g., Python modules, SLURM job errors)
+    \item Clarifying machine learning concepts such as pseudolabeling and transformer fine-tuning
+    \item Assisting with LaTeX formatting and improving clarity of written sections
+\end{itemize}
+
+Example prompts included:
+\begin{itemize}
+    \item "Explain pseudolabeling in semi-supervised learning"
+    \item "Why is my SLURM job failing with missing Python environment?"
+    \item "Improve this paragraph for an IEEE-format machine learning paper"
+\end{itemize}
+
+The AI-generated suggestions were not used verbatim without verification. Several issues were identified during use, including incorrect assumptions about dataset structure, inappropriate evaluation strategies (e.g., suggesting accuracy without labels), and mismatches with project constraints. These errors were corrected through manual debugging, validation against course requirements, and testing beyond the Gradescope autograder.
+
+All model design, training, experimentation, and evaluation were implemented and validated by the authors. Generative AI tools were used only as a support resource and did not replace independent development or analysis.
+
+\section{Conclusion}
+
+In this work, we addressed the problem of identifying ICD-codable medical information in clinical text under extreme data scarcity. Starting from only 20 labeled examples, we built an offline semi-supervised pipeline that combines TF-IDF features, logistic regression, conservative pseudo-labeling, and a single global decision threshold.
+
+The current implementation is working end to end on Grace and generates the required submission files without external APIs or online dependencies. The latest submitted model currently scores 29/60 on Gradescope, which is enough to show that the pipeline is functional but not yet tuned to the level needed for a strong hidden score.
+
+Future work should focus on the highest-payoff changes first: tighter threshold tuning, smaller and cleaner pseudo-label sets, and additional calibration work on the linear model path. Those changes are more likely to improve the hidden metrics than reintroducing heavier embeddings.
+
+\begin{thebibliography}{1}
+
+\bibitem{mimic}
+A. E. Johnson et al., ``MIMIC-III, a freely accessible critical care database,'' Scientific Data, 2016.
+
+\bibitem{bert}
+J. Devlin et al., ``BERT: Pre-training of Deep Bidirectional Transformers,'' NAACL, 2019.
+
+\end{thebibliography}
+
+\end{document}
