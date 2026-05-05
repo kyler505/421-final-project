@@ -6,7 +6,7 @@ from pathlib import Path
 
 from sklearn.metrics import accuracy_score, classification_report, f1_score, precision_score, recall_score
 
-from .config import EmbeddingConfig, MAX_WORDS, SelfTrainingConfig, VectorizerConfig
+from .config import EmbeddingConfig, LogisticConfig, MAX_WORDS, SelfTrainingConfig, VectorizerConfig
 from .data import read_examples, read_labeled_dataset
 from .model import fit_full_pipeline, predict_component_proba, save_bundle
 from .text import deduplicate_texts
@@ -24,6 +24,12 @@ def build_parser():
     p.add_argument('--weight-step', type=float, default=0.1, help='Grid step for ensemble weights')
     p.add_argument('--threshold-step', type=float, default=0.01, help='Grid step for threshold search')
     p.add_argument('--max-unlabeled', type=int, default=0, help='Optional cap on unlabeled rows (0 = no cap)')
+    p.add_argument('--replace-numbers', action='store_true', help='Replace numeric spans with <NUM> before vectorizing')
+    p.add_argument('--logistic-c', type=float, default=1.0, help='Inverse regularization strength for logistic models')
+    p.add_argument('--solver', default='liblinear', choices=['liblinear', 'lbfgs', 'saga'], help='LogisticRegression solver')
+    p.add_argument('--penalty', default='l2', choices=['l1', 'l2', 'elasticnet'], help='LogisticRegression penalty')
+    p.add_argument('--l1-ratio', type=float, default=None, help='Elastic-net l1_ratio when penalty=elasticnet')
+    p.add_argument('--fixed-plan-weights', action='store_true', help='Use the plan weights: baseline=.5 ssl=.3 embedding=.2')
     return p
 
 
@@ -46,21 +52,29 @@ def _print_component_metrics(bundle, texts, labels):
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
-    labeled = read_labeled_dataset(args.train, max_words=MAX_WORDS)
+    labeled = read_labeled_dataset(args.train, max_words=MAX_WORDS, replace_numbers=args.replace_numbers)
     row_ids, texts, labels = zip(*labeled)
     unlabeled_texts = _load_unlabeled(args.unlabeled, max_rows=args.max_unlabeled)
 
     ssl_cfg = SelfTrainingConfig(enabled=not args.no_self_training)
     embedding_cfg = None if args.no_embeddings else EmbeddingConfig(model_name=args.embedding_model)
+    logistic_cfg = LogisticConfig(c=args.logistic_c, solver=args.solver, penalty=args.penalty, l1_ratio=args.l1_ratio)
+    fixed_weights = None
+    if args.fixed_plan_weights:
+        fixed_weights = {'baseline': 0.5, 'ssl': 0.3, 'embedding': 0.2}
+        if embedding_cfg is None:
+            fixed_weights = {'baseline': 0.625, 'ssl': 0.375}
     bundle, report = fit_full_pipeline(
         list(texts),
         list(labels),
         unlabeled_texts=unlabeled_texts if unlabeled_texts else None,
-        vectorizer_cfg=VectorizerConfig(),
+        vectorizer_cfg=VectorizerConfig(replace_numbers=args.replace_numbers),
         ssl_cfg=ssl_cfg,
         embedding_cfg=embedding_cfg,
+        logistic_cfg=logistic_cfg,
         weight_step=args.weight_step,
         threshold_step=args.threshold_step,
+        fixed_weights=fixed_weights,
     )
 
     probs = predict_component_proba(bundle, list(texts), 'ensemble')

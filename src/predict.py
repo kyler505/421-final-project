@@ -17,6 +17,7 @@ def build_parser():
     p.add_argument('--threshold', type=float, default=None, help='Override model threshold')
     p.add_argument('--component', choices=['ensemble', 'baseline', 'ssl', 'embedding'], default='ensemble', help='Which component to use for prediction')
     p.add_argument('--negation-filter', action='store_true', help='Convert predictions to 0 for sentences with strong negation')
+    p.add_argument('--debug-output', default=None, help='Optional CSV with row_id,text,probability,prediction')
     return p
 
 
@@ -40,6 +41,15 @@ def main(argv=None):
         writer.writerow(['row_id', 'prediction'])
         for row_id, pred in zip(row_ids, preds):
             writer.writerow([row_id, pred])
+    if args.debug_output:
+        debug_path = Path(args.debug_output)
+        debug_path.parent.mkdir(parents=True, exist_ok=True)
+        with debug_path.open('w', newline='', encoding='utf-8') as f:
+            writer = csv.writer(f, lineterminator='\n')
+            writer.writerow(['row_id', 'text', 'probability', 'prediction'])
+            for row, prob, pred in zip(rows, probs, preds):
+                writer.writerow([row.row_id, row.text, float(prob), int(pred)])
+        print(f'wrote debug predictions to {debug_path}')
     print(f'wrote {len(preds)} predictions to {out_path}')
     return 0
 

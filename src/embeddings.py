@@ -5,8 +5,6 @@ from functools import lru_cache
 from typing import Iterable
 
 import numpy as np
-import torch
-from transformers import AutoModel, AutoTokenizer
 
 
 @dataclass(frozen=True)
@@ -19,8 +17,17 @@ class EmbeddingEncoderConfig:
 
 class EmbeddingEncoder:
     def __init__(self, config: EmbeddingEncoderConfig):
+        try:
+            import torch
+            from transformers import AutoModel, AutoTokenizer
+        except ImportError as exc:
+            raise RuntimeError(
+                'Embedding support requires torch and transformers. '
+                'Install requirements.txt or train with --no-embeddings.'
+            ) from exc
         self.config = config
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self._torch = torch
         self.tokenizer = AutoTokenizer.from_pretrained(
             config.model_name,
             local_files_only=config.local_files_only,
@@ -57,7 +64,7 @@ class EmbeddingEncoder:
                 summed = (last_hidden * mask).sum(dim=1)
                 counts = mask.sum(dim=1).clamp(min=1.0)
                 pooled = summed / counts
-                pooled = torch.nn.functional.normalize(pooled, p=2, dim=1)
+                pooled = self._torch.nn.functional.normalize(pooled, p=2, dim=1)
                 chunks.append(pooled.detach().cpu().numpy().astype(np.float32))
         return np.vstack(chunks)
 

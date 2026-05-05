@@ -44,8 +44,10 @@ def normalize_text(text: str) -> str:
     return text
 
 
-def normalize_for_vectorizer(text: str) -> str:
+def normalize_for_vectorizer(text: str, replace_numbers: bool = False) -> str:
     text = normalize_text(text)
+    if replace_numbers:
+        text = _NUM_RE.sub("<NUM>", text)
     return text
 
 

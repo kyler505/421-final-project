@@ -33,22 +33,25 @@ def read_examples(path: str | Path) -> list[TextExample]:
     return rows
 
 
-def split_xy(examples: Iterable[TextExample], max_words: int = MAX_WORDS):
+def split_xy(examples: Iterable[TextExample], max_words: int = MAX_WORDS, replace_numbers: bool = False):
     rows = list(examples)
-    texts = [truncate_words(normalize_for_vectorizer(row.text), max_words=max_words) for row in rows]
+    texts = [
+        truncate_words(normalize_for_vectorizer(row.text, replace_numbers=replace_numbers), max_words=max_words)
+        for row in rows
+    ]
     labels = [row.label for row in rows]
     row_ids = [row.row_id for row in rows]
     return row_ids, texts, labels
 
 
-def read_labeled_dataset(path: str | Path, max_words: int = MAX_WORDS):
-    row_ids, texts, labels = split_xy(read_examples(path), max_words=max_words)
+def read_labeled_dataset(path: str | Path, max_words: int = MAX_WORDS, replace_numbers: bool = False):
+    row_ids, texts, labels = split_xy(read_examples(path), max_words=max_words, replace_numbers=replace_numbers)
     labeled = [(rid, txt, int(lbl)) for rid, txt, lbl in zip(row_ids, texts, labels) if lbl is not None]
     if not labeled:
         raise ValueError(f"No labels found in {path}")
     return labeled
 
 
-def read_unlabeled_dataset(path: str | Path, max_words: int = MAX_WORDS):
-    row_ids, texts, labels = split_xy(read_examples(path), max_words=max_words)
+def read_unlabeled_dataset(path: str | Path, max_words: int = MAX_WORDS, replace_numbers: bool = False):
+    row_ids, texts, labels = split_xy(read_examples(path), max_words=max_words, replace_numbers=replace_numbers)
     return [(rid, txt) for rid, txt, lbl in zip(row_ids, texts, labels)]

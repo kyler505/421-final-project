@@ -16,6 +16,7 @@ def build_parser():
     p.add_argument('--data', required=True, help='Path to labeled data CSV')
     p.add_argument('--component', choices=['ensemble', 'baseline', 'ssl', 'embedding'], default='ensemble', help='Which component to score')
     p.add_argument('--all-components', action='store_true', help='Also print component-by-component metrics')
+    p.add_argument('--threshold', type=float, default=None, help='Override the saved model threshold')
     return p
 
 
@@ -42,7 +43,7 @@ def main(argv=None):
     texts = list(texts)
     labels = list(labels)
 
-    result = _score_component(bundle, texts, labels, args.component)
+    result = _score_component(bundle, texts, labels, args.component, threshold=args.threshold)
     print(json.dumps(result, indent=2, sort_keys=True))
     print(classification_report(labels, (predict_component_proba(bundle, texts, args.component) >= result['threshold']).astype(int), digits=4, zero_division=0))
 

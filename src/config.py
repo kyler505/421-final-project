@@ -17,6 +17,17 @@ class VectorizerConfig:
     max_features_word: int = 40000
     max_features_char: int = 30000
     min_df: int = 1
+    replace_numbers: bool = False
+
+
+@dataclass(frozen=True)
+class LogisticConfig:
+    c: float = 1.0
+    solver: str = 'liblinear'
+    penalty: str = 'l2'
+    l1_ratio: float | None = None
+    max_iter: int = 4000
+    class_weight: str | None = 'balanced'
 
 
 @dataclass(frozen=True)

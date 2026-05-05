@@ -12,7 +12,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from sklearn.model_selection import LeaveOneOut
 
-from .config import DEFAULT_THRESHOLD, RANDOM_STATE, EmbeddingConfig, SelfTrainingConfig, VectorizerConfig
+from .config import DEFAULT_THRESHOLD, RANDOM_STATE, EmbeddingConfig, LogisticConfig, SelfTrainingConfig, VectorizerConfig
 from .embeddings import get_embedding_encoder
 from .text import deduplicate_texts
 
@@ -95,6 +95,20 @@ class WeightSearchResult:
     recall: float
 
 
+def metrics_at_threshold(probs: np.ndarray, labels: list[int] | np.ndarray, threshold: float) -> dict[str, Any]:
+    labels_arr = np.asarray(labels, dtype=int)
+    preds = (np.asarray(probs, dtype=float) >= threshold).astype(int)
+    return {
+        'threshold': float(threshold),
+        'accuracy': float(accuracy_score(labels_arr, preds)),
+        'precision': float(precision_score(labels_arr, preds, zero_division=0)),
+        'recall': float(recall_score(labels_arr, preds, zero_division=0)),
+        'f1': float(f1_score(labels_arr, preds, zero_division=0)),
+        'positives': int(preds.sum()),
+        'n_rows': int(len(preds)),
+    }
+
+
 def _build_vectorizers(cfg: VectorizerConfig | None = None):
     cfg = cfg or VectorizerConfig()
     word = TfidfVectorizer(
@@ -120,13 +134,19 @@ def _stack_features(word_vec, char_vec, texts: list[str]):
     return hstack([word_vec.transform(texts), char_vec.transform(texts)])
 
 
-def _fit_logistic(X, labels, sample_weight=None):
-    clf = LogisticRegression(
-        max_iter=4000,
-        class_weight='balanced',
-        random_state=RANDOM_STATE,
-        solver='liblinear',
-    )
+def _fit_logistic(X, labels, sample_weight=None, cfg: LogisticConfig | None = None):
+    cfg = cfg or LogisticConfig()
+    kwargs = {
+        'max_iter': cfg.max_iter,
+        'C': cfg.c,
+        'class_weight': cfg.class_weight,
+        'random_state': RANDOM_STATE,
+        'solver': cfg.solver,
+        'penalty': cfg.penalty,
+    }
+    if cfg.penalty == 'elasticnet':
+        kwargs['l1_ratio'] = cfg.l1_ratio
+    clf = LogisticRegression(**kwargs)
     if sample_weight is None:
         clf.fit(X, labels)
     else:
@@ -134,13 +154,19 @@ def _fit_logistic(X, labels, sample_weight=None):
     return clf
 
 
-def fit_tfidf_model(texts: list[str], labels: list[int], cfg: VectorizerConfig | None = None, sample_weight=None) -> TfidfBinaryModel:
+def fit_tfidf_model(
+    texts: list[str],
+    labels: list[int],
+    cfg: VectorizerConfig | None = None,
+    sample_weight=None,
+    logistic_cfg: LogisticConfig | None = None,
+) -> TfidfBinaryModel:
     cfg = cfg or VectorizerConfig()
     word_vec, char_vec = _build_vectorizers(cfg)
     X_word = word_vec.fit_transform(texts)
     X_char = char_vec.fit_transform(texts)
     X = hstack([X_word, X_char])
-    clf = _fit_logistic(X, labels, sample_weight=sample_weight)
+    clf = _fit_logistic(X, labels, sample_weight=sample_weight, cfg=logistic_cfg)
     return TfidfBinaryModel(word_vec, char_vec, clf, training_rows=len(texts), pseudo_rows=0)
 
 
@@ -251,6 +277,7 @@ def fit_self_training_tfidf(
     unlabeled_texts: list[str] | None = None,
     vectorizer_cfg: VectorizerConfig | None = None,
     ssl_cfg: SelfTrainingConfig | None = None,
+    logistic_cfg: LogisticConfig | None = None,
 ) -> tuple[TfidfBinaryModel, SelfTrainingSummary]:
     vectorizer_cfg = vectorizer_cfg or VectorizerConfig()
     ssl_cfg = ssl_cfg or SelfTrainingConfig()
@@ -261,12 +288,12 @@ def fit_self_training_tfidf(
     sample_weight = [1.0] * len(gold_labels)
     remaining = deduplicate_texts(unlabeled_texts or [])
     if not ssl_cfg.enabled or not remaining:
-        model = fit_tfidf_model(combined_texts, combined_labels, vectorizer_cfg, sample_weight=sample_weight)
+        model = fit_tfidf_model(combined_texts, combined_labels, vectorizer_cfg, sample_weight=sample_weight, logistic_cfg=logistic_cfg)
         model.pseudo_rows = 0
         return model, summary
 
     for round_idx in range(ssl_cfg.rounds):
-        current_model = fit_tfidf_model(combined_texts, combined_labels, vectorizer_cfg, sample_weight=sample_weight)
+        current_model = fit_tfidf_model(combined_texts, combined_labels, vectorizer_cfg, sample_weight=sample_weight, logistic_cfg=logistic_cfg)
         probs = current_model.predict_proba(remaining)
         keep_texts: list[str] = []
         keep_labels: list[int] = []
@@ -294,7 +321,7 @@ def fit_self_training_tfidf(
         summary.pseudo_negative += int(len(keep_labels) - sum(keep_labels))
         remaining = [text for text in remaining if text not in keep_set]
         summary.rounds_completed = round_idx + 1
-    final_model = fit_tfidf_model(combined_texts, combined_labels, vectorizer_cfg, sample_weight=sample_weight)
+    final_model = fit_tfidf_model(combined_texts, combined_labels, vectorizer_cfg, sample_weight=sample_weight, logistic_cfg=logistic_cfg)
     final_model.pseudo_rows = summary.pseudo_rows
     return final_model, summary
 
@@ -313,7 +340,7 @@ def fit_embedding_model(
         local_files_only=cfg.local_files_only,
     )
     X = encoder.encode(texts, batch_size=cfg.batch_size)
-    clf = _fit_logistic(X, labels, sample_weight=sample_weight)
+    clf = _fit_logistic(X, labels, sample_weight=sample_weight, cfg=LogisticConfig())
     return EmbeddingBinaryModel(
         classifier=clf,
         model_name=cfg.model_name,
@@ -393,11 +420,11 @@ def _score_thresholds(probs: np.ndarray, labels: np.ndarray, threshold_step: flo
     best = None
     thresholds = np.arange(0.05, 0.95 + 1e-9, threshold_step)
     for threshold in thresholds:
-        preds = (probs >= threshold).astype(int)
-        f1 = f1_score(labels, preds, zero_division=0)
-        acc = accuracy_score(labels, preds)
-        prec = precision_score(labels, preds, zero_division=0)
-        rec = recall_score(labels, preds, zero_division=0)
+        metrics = metrics_at_threshold(probs, labels, float(threshold))
+        f1 = metrics['f1']
+        acc = metrics['accuracy']
+        prec = metrics['precision']
+        rec = metrics['recall']
         candidate = WeightSearchResult(weights={}, threshold=float(threshold), f1=float(f1), accuracy=float(acc), precision=float(prec), recall=float(rec))
         if best is None:
             best = candidate
@@ -451,6 +478,7 @@ def cross_validated_component_probs(
     vectorizer_cfg: VectorizerConfig | None = None,
     ssl_cfg: SelfTrainingConfig | None = None,
     embedding_cfg: EmbeddingConfig | None = None,
+    logistic_cfg: LogisticConfig | None = None,
 ) -> dict[str, np.ndarray]:
     vectorizer_cfg = vectorizer_cfg or VectorizerConfig()
     ssl_cfg = ssl_cfg or SelfTrainingConfig()
@@ -467,8 +495,8 @@ def cross_validated_component_probs(
         train_texts = [gold_texts[i] for i in train_idx]
         train_labels = [int(labels_arr[i]) for i in train_idx]
         test_text = [gold_texts[test_idx[0]]]
-        baseline = fit_tfidf_model(train_texts, train_labels, vectorizer_cfg)
-        ssl_model, _ = fit_self_training_tfidf(train_texts, train_labels, unlabeled_texts, vectorizer_cfg, ssl_cfg)
+        baseline = fit_tfidf_model(train_texts, train_labels, vectorizer_cfg, logistic_cfg=logistic_cfg)
+        ssl_model, _ = fit_self_training_tfidf(train_texts, train_labels, unlabeled_texts, vectorizer_cfg, ssl_cfg, logistic_cfg=logistic_cfg)
         probs['baseline'][test_idx[0]] = float(baseline.predict_proba(test_text)[0])
         probs['ssl'][test_idx[0]] = float(ssl_model.predict_proba(test_text)[0])
         if use_embedding:
@@ -484,8 +512,10 @@ def fit_full_pipeline(
     vectorizer_cfg: VectorizerConfig | None = None,
     ssl_cfg: SelfTrainingConfig | None = None,
     embedding_cfg: EmbeddingConfig | None = None,
+    logistic_cfg: LogisticConfig | None = None,
     weight_step: float = 0.1,
     threshold_step: float = 0.01,
+    fixed_weights: dict[str, float] | None = None,
 ) -> tuple[EnsembleBundle, dict[str, Any]]:
     vectorizer_cfg = vectorizer_cfg or VectorizerConfig()
     ssl_cfg = ssl_cfg or SelfTrainingConfig()
@@ -497,10 +527,34 @@ def fit_full_pipeline(
         vectorizer_cfg=vectorizer_cfg,
         ssl_cfg=ssl_cfg,
         embedding_cfg=embedding_cfg,
+        logistic_cfg=logistic_cfg,
     )
-    best = search_weights_and_threshold(component_probs, gold_labels, step=weight_step, threshold_step=threshold_step)
+    if fixed_weights:
+        labels_arr = np.asarray(gold_labels, dtype=int)
+        blended = np.zeros(len(labels_arr), dtype=float)
+        total_weight = sum(float(fixed_weights.get(name, 0.0)) for name in component_probs)
+        if total_weight <= 0:
+            raise ValueError('fixed_weights must include at least one active component')
+        for name, probs in component_probs.items():
+            blended += probs * (float(fixed_weights.get(name, 0.0)) / total_weight)
+        threshold_result = _score_thresholds(blended, labels_arr, threshold_step=threshold_step)
+        best = WeightSearchResult(
+            weights={name: float(fixed_weights.get(name, 0.0)) for name in component_probs},
+            threshold=threshold_result.threshold,
+            f1=threshold_result.f1,
+            accuracy=threshold_result.accuracy,
+            precision=threshold_result.precision,
+            recall=threshold_result.recall,
+        )
+    else:
+        best = search_weights_and_threshold(component_probs, gold_labels, step=weight_step, threshold_step=threshold_step)
 
-    baseline = fit_tfidf_model(gold_texts, gold_labels, vectorizer_cfg)
+    component_cv_metrics = {
+        name: metrics_at_threshold(probs, gold_labels, _score_thresholds(probs, np.asarray(gold_labels, dtype=int), threshold_step).threshold)
+        for name, probs in component_probs.items()
+    }
+
+    baseline = fit_tfidf_model(gold_texts, gold_labels, vectorizer_cfg, logistic_cfg=logistic_cfg)
 
     # Similarity-based SSL: use embedding similarity to find pseudo-labels
     # when absolute thresholds can't produce any (tiny dataset problem)
@@ -526,13 +580,19 @@ def fit_full_pipeline(
             combined_texts = list(gold_texts) + pseudo_texts
             combined_labels = list(gold_labels) + pseudo_labels
             combined_weights = [1.0] * len(gold_labels) + [ssl_cfg.pseudo_weight] * len(pseudo_labels)
-            ssl_model = fit_tfidf_model(combined_texts, combined_labels, sample_weight=combined_weights)
+            ssl_model = fit_tfidf_model(
+                combined_texts,
+                combined_labels,
+                vectorizer_cfg,
+                sample_weight=combined_weights,
+                logistic_cfg=logistic_cfg,
+            )
             ssl_model.pseudo_rows = len(pseudo_texts)
         else:
-            ssl_model, ssl_summary2 = fit_self_training_tfidf(gold_texts, gold_labels, unlabeled_texts, vectorizer_cfg, ssl_cfg)
+            ssl_model, ssl_summary2 = fit_self_training_tfidf(gold_texts, gold_labels, unlabeled_texts, vectorizer_cfg, ssl_cfg, logistic_cfg=logistic_cfg)
             ssl_summary = ssl_summary2
     else:
-        ssl_model, ssl_summary = fit_self_training_tfidf(gold_texts, gold_labels, unlabeled_texts, vectorizer_cfg, ssl_cfg)
+        ssl_model, ssl_summary = fit_self_training_tfidf(gold_texts, gold_labels, unlabeled_texts, vectorizer_cfg, ssl_cfg, logistic_cfg=logistic_cfg)
 
     embedding_model = fit_embedding_model(gold_texts, gold_labels, embedding_cfg) if embedding_cfg is not None else None
 
@@ -545,6 +605,7 @@ def fit_full_pipeline(
         metadata={
             'vectorizer_cfg': asdict(vectorizer_cfg),
             'ssl_cfg': asdict(ssl_cfg),
+            'logistic_cfg': asdict(logistic_cfg or LogisticConfig()),
             'embedding_cfg': asdict(embedding_cfg) if embedding_cfg is not None else None,
             'cv_metrics': {
                 'f1': best.f1,
@@ -553,6 +614,7 @@ def fit_full_pipeline(
                 'recall': best.recall,
             },
             'ssl_summary': asdict(ssl_summary),
+            'component_cv_metrics': component_cv_metrics,
             'component_cv_probabilities': {k: v.tolist() for k, v in component_probs.items()},
         },
     )
@@ -567,6 +629,10 @@ def fit_full_pipeline(
         },
         'ssl_summary': asdict(ssl_summary),
         'component_names': bundle.component_names(),
+        'component_cv_metrics': component_cv_metrics,
+        'vectorizer_cfg': asdict(vectorizer_cfg),
+        'logistic_cfg': asdict(logistic_cfg or LogisticConfig()),
+        'embedding_cfg': asdict(embedding_cfg) if embedding_cfg is not None else None,
     }
     return bundle, report
 
