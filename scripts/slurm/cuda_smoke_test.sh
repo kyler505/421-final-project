@@ -22,7 +22,7 @@ mkdir -p "$PROJECT_DIR/logs"
 cd "$PROJECT_DIR"
 
 module purge
-module load GCC/13.3.0 OpenMPI/5.0.3
+module load GCC/13.3.0 OpenMPI/5.0.3 scikit-learn/1.6.1
 
 if [ "$USE_PIP_TORCH" = "1" ]; then
   python -m pip install --user --upgrade pip
