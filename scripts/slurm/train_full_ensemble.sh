@@ -14,6 +14,7 @@ set -euo pipefail
 # Navigation
 PROJECT_ROOT="${SLURM_SUBMIT_DIR:-$(pwd)}"
 cd "$PROJECT_ROOT"
+export TRANSFORMERS_OFFLINE=1
 
 # Conda environment activation
 source $(conda info --base)/etc/profile.d/conda.sh
