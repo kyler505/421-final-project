@@ -33,7 +33,9 @@ def build_parser():
     p.add_argument('--ssl-rounds', type=int, default=1, help='Number of SSL self-training rounds')
     p.add_argument('--ssl-positive-confidence', type=float, default=0.95, help='Positive pseudo-label confidence threshold')
     p.add_argument('--ssl-negative-confidence', type=float, default=0.05, help='Negative pseudo-label confidence threshold')
+    p.add_argument('--ssl-gold-weight', type=float, default=5.0, help='Sample weight for gold labeled rows during SSL training')
     p.add_argument('--ssl-pseudo-weight', type=float, default=0.2, help='Sample weight for pseudo-labeled rows')
+    p.add_argument('--ssl-max-pseudo-per-class-per-round', type=int, default=1000, help='Cap accepted pseudo-labels per class per round')
     p.add_argument('--ssl-rank-mode', action='store_true', help='Use rank-based pseudo-labeling when embeddings are enabled')
     p.add_argument('--ssl-rank-top-k', type=int, default=20, help='Top-K for rank-based pseudo-labeling')
     p.add_argument('--ssl-max-pool', type=int, default=500, help='Max unlabeled pool for rank-based pseudo-labeling')
@@ -83,7 +85,9 @@ def main(argv=None):
         rounds=args.ssl_rounds,
         positive_confidence=args.ssl_positive_confidence,
         negative_confidence=args.ssl_negative_confidence,
+        gold_weight=args.ssl_gold_weight,
         pseudo_weight=args.ssl_pseudo_weight,
+        max_pseudo_per_class_per_round=args.ssl_max_pseudo_per_class_per_round,
         rank_mode=args.ssl_rank_mode,
         rank_top_k=args.ssl_rank_top_k,
         max_pool=args.ssl_max_pool,

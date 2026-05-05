@@ -85,6 +85,10 @@ class SelfTrainingSummary:
     pseudo_negative: int = 0
     confidence_positive: float = 0.0
     confidence_negative: float = 0.0
+    gold_weight: float = 0.0
+    pseudo_weight: float = 0.0
+    max_pseudo_per_class_per_round: int = 0
+    round_stats: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -167,6 +171,10 @@ def _dedupe_unlabeled_records(row_ids: list[str], texts: list[str]) -> tuple[lis
     return deduped_row_ids, deduped_texts
 
 
+def _gold_sample_weights(count: int, weight: float) -> list[float]:
+    return [float(weight)] * count
+
+
 def _fit_logistic(X, labels, sample_weight=None, cfg: LogisticConfig | None = None):
     cfg = cfg or LogisticConfig()
     kwargs = {
@@ -234,6 +242,31 @@ def _rank_based_pseudo_labels(
             weights.append(1.0 - float(probs[idx]))
             seen.add(txt)
     return pseudo_texts, labels, weights
+
+
+def _select_threshold_pseudo_labels(
+    probs: np.ndarray,
+    row_ids: list[str],
+    texts: list[str],
+    positive_confidence: float,
+    negative_confidence: float,
+    max_pseudo_per_class_per_round: int,
+) -> tuple[list[tuple[str, str, float]], list[tuple[str, str, float]]]:
+    positive_candidates: list[tuple[str, str, float]] = []
+    negative_candidates: list[tuple[str, str, float]] = []
+    for row_id, text, p in zip(row_ids, texts, probs):
+        score = float(p)
+        if score >= positive_confidence:
+            positive_candidates.append((row_id, text, score))
+        elif score <= negative_confidence:
+            negative_candidates.append((row_id, text, score))
+    positive_candidates.sort(key=lambda item: item[2], reverse=True)
+    negative_candidates.sort(key=lambda item: item[2])
+    cap = max(0, int(max_pseudo_per_class_per_round))
+    if cap > 0:
+        positive_candidates = positive_candidates[:cap]
+        negative_candidates = negative_candidates[:cap]
+    return positive_candidates, negative_candidates
 
 
 def _resolve_teacher_model(
@@ -339,11 +372,17 @@ def fit_self_training_tfidf(
 ) -> tuple[TfidfBinaryModel, SelfTrainingSummary]:
     vectorizer_cfg = vectorizer_cfg or VectorizerConfig()
     ssl_cfg = ssl_cfg or SelfTrainingConfig()
-    summary = SelfTrainingSummary(confidence_positive=ssl_cfg.positive_confidence, confidence_negative=ssl_cfg.negative_confidence)
+    summary = SelfTrainingSummary(
+        confidence_positive=ssl_cfg.positive_confidence,
+        confidence_negative=ssl_cfg.negative_confidence,
+        gold_weight=ssl_cfg.gold_weight,
+        pseudo_weight=ssl_cfg.pseudo_weight,
+        max_pseudo_per_class_per_round=ssl_cfg.max_pseudo_per_class_per_round,
+    )
 
     combined_texts = list(gold_texts)
     combined_labels = list(gold_labels)
-    sample_weight = [1.0] * len(gold_labels)
+    sample_weight = _gold_sample_weights(len(gold_labels), ssl_cfg.gold_weight)
     remaining_row_ids, remaining_texts = _coerce_unlabeled_records(unlabeled_texts)
     remaining_row_ids, remaining_texts = _dedupe_unlabeled_records(remaining_row_ids, remaining_texts)
     if not ssl_cfg.enabled or not remaining_texts:
@@ -378,6 +417,21 @@ def fit_self_training_tfidf(
         summary.pseudo_rows = len(pseudo_texts)
         summary.pseudo_positive = int(sum(pseudo_labels))
         summary.pseudo_negative = int(len(pseudo_labels) - sum(pseudo_labels))
+        summary.round_stats.append(
+            {
+                'round': 1,
+                'teacher': 'rank',
+                'candidate_positive': len([label for label in pseudo_labels if label == 1]),
+                'candidate_negative': len([label for label in pseudo_labels if label == 0]),
+                'accepted_positive': len([label for label in pseudo_labels if label == 1]),
+                'accepted_negative': len([label for label in pseudo_labels if label == 0]),
+                'accepted_total': len(pseudo_texts),
+                'remaining_after_round': 0,
+                'gold_weight': ssl_cfg.gold_weight,
+                'pseudo_weight': ssl_cfg.pseudo_weight,
+                'max_pseudo_per_class_per_round': ssl_cfg.max_pseudo_per_class_per_round,
+            }
+        )
         final_model = fit_tfidf_model(combined_texts, combined_labels, vectorizer_cfg, sample_weight=sample_weight, logistic_cfg=logistic_cfg)
         final_model.pseudo_rows = summary.pseudo_rows
         return final_model, summary
@@ -411,46 +465,75 @@ def fit_self_training_tfidf(
             scorer = teacher_model
             scorer_name = resolved_teacher_mode or 'teacher'
         probs = scorer.predict_proba(remaining_texts)
+        positive_candidates, negative_candidates = _select_threshold_pseudo_labels(
+            probs,
+            remaining_row_ids,
+            remaining_texts,
+            ssl_cfg.positive_confidence,
+            ssl_cfg.negative_confidence,
+            ssl_cfg.max_pseudo_per_class_per_round,
+        )
         keep_texts: list[str] = []
         keep_labels: list[int] = []
         keep_weights: list[float] = []
         keep_set: set[str] = set()
-        for row_id, text, p in zip(remaining_row_ids, remaining_texts, probs):
-            if p >= ssl_cfg.positive_confidence:
-                keep_texts.append(text)
-                keep_labels.append(1)
-                keep_weights.append(ssl_cfg.pseudo_weight)
-                keep_set.add(normalize_text(text))
-                if pseudo_manifest is not None:
-                    pseudo_manifest.append(
-                        {
-                            'round': round_idx + 1,
-                            'source': scorer_name,
-                            'row_id': row_id,
-                            'text': text,
-                            'label': 1,
-                            'score': float(p),
-                            'weight': float(ssl_cfg.pseudo_weight),
-                        }
-                    )
-            elif p <= ssl_cfg.negative_confidence:
-                keep_texts.append(text)
-                keep_labels.append(0)
-                keep_weights.append(ssl_cfg.pseudo_weight)
-                keep_set.add(normalize_text(text))
-                if pseudo_manifest is not None:
-                    pseudo_manifest.append(
-                        {
-                            'round': round_idx + 1,
-                            'source': scorer_name,
-                            'row_id': row_id,
-                            'text': text,
-                            'label': 0,
-                            'score': float(p),
-                            'weight': float(ssl_cfg.pseudo_weight),
-                        }
-                    )
+        for row_id, text, p in positive_candidates:
+            keep_texts.append(text)
+            keep_labels.append(1)
+            keep_weights.append(ssl_cfg.pseudo_weight)
+            keep_set.add(normalize_text(text))
+            if pseudo_manifest is not None:
+                pseudo_manifest.append(
+                    {
+                        'round': round_idx + 1,
+                        'source': scorer_name,
+                        'row_id': row_id,
+                        'text': text,
+                        'label': 1,
+                        'score': float(p),
+                        'weight': float(ssl_cfg.pseudo_weight),
+                    }
+                )
+        for row_id, text, p in negative_candidates:
+            keep_texts.append(text)
+            keep_labels.append(0)
+            keep_weights.append(ssl_cfg.pseudo_weight)
+            keep_set.add(normalize_text(text))
+            if pseudo_manifest is not None:
+                pseudo_manifest.append(
+                    {
+                        'round': round_idx + 1,
+                        'source': scorer_name,
+                        'row_id': row_id,
+                        'text': text,
+                        'label': 0,
+                        'score': float(p),
+                        'weight': float(ssl_cfg.pseudo_weight),
+                    }
+                )
+        round_stat = {
+            'round': round_idx + 1,
+            'teacher': scorer_name,
+            'candidate_positive': len(positive_candidates),
+            'candidate_negative': len(negative_candidates),
+            'accepted_positive': len(positive_candidates),
+            'accepted_negative': len(negative_candidates),
+            'accepted_total': len(keep_texts),
+            'remaining_after_round': 0,
+            'gold_weight': ssl_cfg.gold_weight,
+            'pseudo_weight': ssl_cfg.pseudo_weight,
+            'max_pseudo_per_class_per_round': ssl_cfg.max_pseudo_per_class_per_round,
+        }
         if not keep_texts:
+            summary.round_stats.append(
+                {
+                    **round_stat,
+                    'accepted_positive': 0,
+                    'accepted_negative': 0,
+                    'accepted_total': 0,
+                    'remaining_after_round': len(remaining_texts),
+                }
+            )
             summary.rounds_completed = round_idx
             break
         combined_texts.extend(keep_texts)
@@ -467,6 +550,8 @@ def fit_self_training_tfidf(
         remaining_row_ids = [row_id for row_id, _ in remaining_pairs]
         remaining_texts = [text for _, text in remaining_pairs]
         summary.rounds_completed = round_idx + 1
+        round_stat['remaining_after_round'] = len(remaining_texts)
+        summary.round_stats.append(round_stat)
     final_model = fit_tfidf_model(combined_texts, combined_labels, vectorizer_cfg, sample_weight=sample_weight, logistic_cfg=logistic_cfg)
     final_model.pseudo_rows = summary.pseudo_rows
     return final_model, summary
@@ -653,6 +738,7 @@ def cross_validated_component_probs(
     ssl_cfg = ssl_cfg or SelfTrainingConfig()
     loo = LeaveOneOut()
     labels_arr = np.asarray(gold_labels, dtype=int)
+    gold_sample_weight = _gold_sample_weights(len(gold_texts), ssl_cfg.gold_weight)
     probs = {
         'baseline': np.zeros(len(gold_texts), dtype=float),
         'ssl': np.zeros(len(gold_texts), dtype=float),
@@ -663,8 +749,15 @@ def cross_validated_component_probs(
     for train_idx, test_idx in loo.split(gold_texts):
         train_texts = [gold_texts[i] for i in train_idx]
         train_labels = [int(labels_arr[i]) for i in train_idx]
+        train_gold_weights = [gold_sample_weight[i] for i in train_idx]
         test_text = [gold_texts[test_idx[0]]]
-        baseline = fit_tfidf_model(train_texts, train_labels, vectorizer_cfg, logistic_cfg=logistic_cfg)
+        baseline = fit_tfidf_model(
+            train_texts,
+            train_labels,
+            vectorizer_cfg,
+            sample_weight=train_gold_weights,
+            logistic_cfg=logistic_cfg,
+        )
         ssl_model, _ = fit_self_training_tfidf(
             train_texts,
             train_labels,
@@ -678,7 +771,12 @@ def cross_validated_component_probs(
         probs['baseline'][test_idx[0]] = float(baseline.predict_proba(test_text)[0])
         probs['ssl'][test_idx[0]] = float(ssl_model.predict_proba(test_text)[0])
         if use_embedding:
-            embedding_model = fit_embedding_model(train_texts, train_labels, embedding_cfg)
+            embedding_model = fit_embedding_model(
+                train_texts,
+                train_labels,
+                embedding_cfg,
+                sample_weight=train_gold_weights,
+            )
             probs['embedding'][test_idx[0]] = float(embedding_model.predict_proba(test_text)[0])
     return probs
 
@@ -760,7 +858,8 @@ def fit_full_pipeline(
             component_threshold = evaluation_threshold
         component_cv_metrics[name] = metrics_at_threshold(probs, gold_labels, component_threshold)
 
-    baseline = fit_tfidf_model(gold_texts, gold_labels, vectorizer_cfg, logistic_cfg=logistic_cfg)
+    gold_sample_weight = _gold_sample_weights(len(gold_labels), ssl_cfg.gold_weight)
+    baseline = fit_tfidf_model(gold_texts, gold_labels, vectorizer_cfg, sample_weight=gold_sample_weight, logistic_cfg=logistic_cfg)
 
     # Similarity-based SSL: use embedding similarity to find pseudo-labels
     # when absolute thresholds can't produce any (tiny dataset problem)
@@ -790,7 +889,7 @@ def fit_full_pipeline(
             ssl_summary.pseudo_negative = sum(1 for l in pseudo_labels if l == 0)
             combined_texts = list(gold_texts) + pseudo_texts
             combined_labels = list(gold_labels) + pseudo_labels
-            combined_weights = [1.0] * len(gold_labels) + [ssl_cfg.pseudo_weight * float(w) for w in pseudo_weights]
+            combined_weights = _gold_sample_weights(len(gold_labels), ssl_cfg.gold_weight) + [ssl_cfg.pseudo_weight * float(w) for w in pseudo_weights]
             ssl_model = fit_tfidf_model(
                 combined_texts,
                 combined_labels,
@@ -829,7 +928,7 @@ def fit_full_pipeline(
             # Train SSL-TF-IDF on gold + pseudo-labels
             combined_texts = list(gold_texts) + pseudo_texts
             combined_labels = list(gold_labels) + pseudo_labels
-            combined_weights = [1.0] * len(gold_labels) + [ssl_cfg.pseudo_weight] * len(pseudo_labels)
+            combined_weights = _gold_sample_weights(len(gold_labels), ssl_cfg.gold_weight) + [ssl_cfg.pseudo_weight] * len(pseudo_labels)
             ssl_model = fit_tfidf_model(
                 combined_texts,
                 combined_labels,
@@ -864,7 +963,11 @@ def fit_full_pipeline(
             pseudo_manifest=pseudo_manifest if pseudo_manifest_output else None,
         )
 
-    embedding_model = fit_embedding_model(gold_texts, gold_labels, embedding_cfg) if embedding_cfg is not None else None
+    embedding_model = (
+        fit_embedding_model(gold_texts, gold_labels, embedding_cfg, sample_weight=gold_sample_weight)
+        if embedding_cfg is not None
+        else None
+    )
     if pseudo_manifest_output:
         _write_pseudo_manifest(pseudo_manifest_output, pseudo_manifest)
 

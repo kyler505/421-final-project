@@ -36,7 +36,9 @@ class SelfTrainingConfig:
     rounds: int = 2
     positive_confidence: float = 0.95
     negative_confidence: float = 0.05
+    gold_weight: float = 5.0
     pseudo_weight: float = 0.20
+    max_pseudo_per_class_per_round: int = 1000
     # Ranking mode is kept for smoke tests; production uses threshold-based SSL.
     rank_mode: bool = False
     rank_top_k: int = 20

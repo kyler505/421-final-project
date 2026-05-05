@@ -245,3 +245,58 @@ def test_fit_self_training_tfidf_stops_when_unlabeled_pool_is_empty(monkeypatch,
 
     assert model.pseudo_rows == 4
     assert summary.rounds_completed == 1
+
+
+def test_fit_self_training_tfidf_respects_per_class_caps_and_gold_weight(monkeypatch):
+    class FakeModel:
+        def __init__(self, probs):
+            self._probs = np.asarray(probs, dtype=float)
+            self.pseudo_rows = 0
+
+        def predict_proba(self, texts):
+            if not texts:
+                return np.asarray([], dtype=float)
+            reps = int(np.ceil(len(texts) / len(self._probs)))
+            return np.tile(self._probs, reps)[: len(texts)]
+
+    teacher = FakeModel([0.99, 0.98, 0.97, 0.04, 0.03, 0.02])
+    fit_calls = []
+
+    def fake_fit_tfidf_model(texts, labels, cfg=None, sample_weight=None, logistic_cfg=None):
+        fit_calls.append(list(sample_weight) if sample_weight is not None else None)
+        return FakeModel([0.5] * max(1, len(texts)))
+
+    monkeypatch.setattr(model_module, "_resolve_teacher_model", lambda *args, **kwargs: (teacher, "tfidf"))
+    monkeypatch.setattr(model_module, "fit_tfidf_model", fake_fit_tfidf_model)
+
+    model, summary = model_module.fit_self_training_tfidf(
+        ["alpha positive", "beta negative", "gamma positive", "delta negative"],
+        [1, 0, 1, 0],
+        unlabeled_texts=[
+            ("u1", "one"),
+            ("u2", "two"),
+            ("u3", "three"),
+            ("u4", "four"),
+            ("u5", "five"),
+            ("u6", "six"),
+        ],
+        ssl_cfg=SelfTrainingConfig(
+            enabled=True,
+            rounds=1,
+            positive_confidence=0.95,
+            negative_confidence=0.05,
+            gold_weight=7.0,
+            pseudo_weight=0.2,
+            max_pseudo_per_class_per_round=1,
+        ),
+        teacher_mode="tfidf",
+        pseudo_manifest=[],
+    )
+
+    assert model.pseudo_rows == 2
+    assert summary.pseudo_positive == 1
+    assert summary.pseudo_negative == 1
+    assert summary.round_stats[0]["accepted_positive"] == 1
+    assert summary.round_stats[0]["accepted_negative"] == 1
+    assert summary.round_stats[0]["gold_weight"] == 7.0
+    assert any(weights == [7.0, 7.0, 7.0, 7.0, 0.2, 0.2] for weights in fit_calls if weights is not None)
