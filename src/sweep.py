@@ -41,13 +41,13 @@ def _candidate_grid(replace_numbers: bool):
         VectorizerConfig((1, 3), (3, 5), 20000, 10000, 1, replace_numbers),
         VectorizerConfig((1, 2), (3, 4), 10000, 5000, 1, replace_numbers),
     ]
+    c_values = [0.25, 1.0, 3.0, 10.0]
     logistics = [
-        LogisticConfig(c=0.25, solver='liblinear', penalty='l2'),
-        LogisticConfig(c=1.0, solver='liblinear', penalty='l2'),
-        LogisticConfig(c=10.0, solver='liblinear', penalty='l2'),
-        LogisticConfig(c=100.0, solver='liblinear', penalty='l2'),
-        LogisticConfig(c=100.0, solver='saga', penalty='elasticnet', l1_ratio=0.1, max_iter=8000),
+        LogisticConfig(c=c, solver='liblinear', penalty='l2', class_weight=class_weight)
+        for class_weight in (None, 'balanced')
+        for c in c_values
     ]
+    logistics.append(LogisticConfig(c=3.0, solver='saga', penalty='elasticnet', l1_ratio=0.1, max_iter=8000, class_weight=None))
     for vi, vectorizer_cfg in enumerate(vectorizers):
         for li, logistic_cfg in enumerate(logistics):
             yield f'v{vi}_lr{li}', vectorizer_cfg, logistic_cfg

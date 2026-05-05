@@ -29,6 +29,7 @@ def build_parser():
     p.add_argument('--solver', default='liblinear', choices=['liblinear', 'lbfgs', 'saga'], help='LogisticRegression solver')
     p.add_argument('--penalty', default='l2', choices=['l1', 'l2', 'elasticnet'], help='LogisticRegression penalty')
     p.add_argument('--l1-ratio', type=float, default=None, help='Elastic-net l1_ratio when penalty=elasticnet')
+    p.add_argument('--class-weight', default='balanced', choices=['balanced', 'none'], help='LogisticRegression class weighting')
     p.add_argument('--fixed-plan-weights', action='store_true', help='Use the plan weights: baseline=.5 ssl=.3 embedding=.2')
     return p
 
@@ -62,7 +63,13 @@ def main(argv=None):
 
     ssl_cfg = SelfTrainingConfig(enabled=not args.no_self_training)
     embedding_cfg = None if args.no_embeddings else EmbeddingConfig(model_name=args.embedding_model)
-    logistic_cfg = LogisticConfig(c=args.logistic_c, solver=args.solver, penalty=args.penalty, l1_ratio=args.l1_ratio)
+    logistic_cfg = LogisticConfig(
+        c=args.logistic_c,
+        solver=args.solver,
+        penalty=args.penalty,
+        l1_ratio=args.l1_ratio,
+        class_weight=None if args.class_weight == 'none' else 'balanced',
+    )
     fixed_weights = None
     if args.fixed_plan_weights:
         fixed_weights = {'baseline': 0.5, 'ssl': 0.3, 'embedding': 0.2}
