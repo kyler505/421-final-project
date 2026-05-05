@@ -484,6 +484,19 @@ def cross_validated_component_probs(
     vectorizer_cfg = vectorizer_cfg or VectorizerConfig()
     ssl_cfg = ssl_cfg or SelfTrainingConfig()
     
+    # Pre-calculate embeddings once if needed to save time in CV
+    all_embeddings = None
+    if embedding_cfg is not None:
+        print(f"Pre-calculating embeddings for {len(gold_texts)} sentences...")
+        encoder = get_embedding_encoder(
+            embedding_cfg.model_name,
+            max_length=embedding_cfg.max_length,
+            batch_size=embedding_cfg.batch_size,
+            local_files_only=embedding_cfg.local_files_only,
+        )
+        all_embeddings = encoder.encode(gold_texts)
+        print("Embeddings complete.")
+
     # Use KFold if dataset is large, otherwise LeaveOneOut
     if len(gold_texts) > 100:
         cv = KFold(n_splits=5, shuffle=True, random_state=RANDOM_STATE)
@@ -498,7 +511,9 @@ def cross_validated_component_probs(
     use_embedding = embedding_cfg is not None
     if use_embedding:
         probs['embedding'] = np.zeros(len(gold_texts), dtype=float)
-    for train_idx, test_idx in cv.split(gold_texts):
+
+    for fold_idx, (train_idx, test_idx) in enumerate(cv.split(gold_texts)):
+        print(f"Processing CV Fold {fold_idx + 1}...")
         train_texts = [gold_texts[i] for i in train_idx]
         train_labels = [int(labels_arr[i]) for i in train_idx]
         test_texts = [gold_texts[i] for i in test_idx]
@@ -513,9 +528,12 @@ def cross_validated_component_probs(
             probs['baseline'][idx] = float(batch_baseline[i])
             probs['ssl'][idx] = float(batch_ssl[i])
             
-        if use_embedding:
-            embedding_model = fit_embedding_model(train_texts, train_labels, embedding_cfg)
-            batch_emb = embedding_model.predict_proba(test_texts)
+        if use_embedding and all_embeddings is not None:
+            # Use pre-calculated features for the embedding classifier
+            X_train = all_embeddings[train_idx]
+            X_test = all_embeddings[test_idx]
+            clf = _fit_logistic(X_train, train_labels, cfg=LogisticConfig())
+            batch_emb = clf.predict_proba(X_test)[:, 1]
             for i, idx in enumerate(test_idx):
                 probs['embedding'][idx] = float(batch_emb[i])
     return probs

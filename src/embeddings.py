@@ -27,6 +27,7 @@ class EmbeddingEncoder:
             ) from exc
         self.config = config
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print(f"EmbeddingEncoder using device: {self.device}")
         self._torch = torch
         self.tokenizer = AutoTokenizer.from_pretrained(
             config.model_name,
