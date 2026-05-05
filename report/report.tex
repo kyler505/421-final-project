@@ -18,9 +18,9 @@
 \begin{abstract}
 Assigning International Classification of Diseases (ICD) codes to clinical notes is difficult because the relevant evidence is buried in noisy free text and labeled examples are scarce. We study a sentence-level binary classification task that predicts whether a sentence contains ICD-codable clinical information.
 
-To handle the low-data setting, we build an offline semi-supervised pipeline around a TF-IDF logistic-regression baseline and high-confidence self-training on unlabeled MIMIC-III sentences. The system normalizes and truncates input text, sweeps a small set of linear-model hyperparameters, and selects a global threshold using leave-one-out validation on the 20 labeled examples. We also implemented an optional frozen Bio\_ClinicalBERT embedding branch, but the faster production path used for grading relies on the TF-IDF plus self-training ensemble because it is simpler and cheaper to run.
+To handle the low-data setting, we build an offline semi-supervised pipeline around a TF-IDF logistic-regression student and teacher-guided pseudo-labeling on unlabeled MIMIC-III sentences. The current implementation restores full-pool threshold-based self-training, adds explicit gold-weight and pseudo-label caps to control confirmation bias, and logs accepted pseudo-labels in per-run manifests. The Grace batch workflow now runs in isolated compare/calibrate modes so TF-IDF and Bio\_ClinicalBERT teachers can be compared without overwriting one another, while a narrow calibration pass tunes the final ensemble and threshold.
 
-On Gradescope, the current processed submission scores 29/60 overall. The shape check is correct, but hidden-set accuracy and F1 remain the main bottlenecks. The current results show that the pipeline is functional and offline-compatible, but it still needs further tuning to improve hidden performance.
+The current codebase is fully offline, uses the same preprocessing at train and predict time, and keeps the final deployable classifier lightweight. Earlier submission attempts plateaued on hidden evaluation, which motivated the stronger SSL controls described in this report. The pipeline is functional and reproducible on Grace, but the final hidden score still depends on which teacher and calibration settings prove best in the next round of submissions.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -37,7 +37,7 @@ In this project, we focus on a simplified but fundamental subproblem: determinin
 
 To address this limitation, we adopt a semi-supervised learning approach that leverages large-scale unlabeled data from the MIMIC-III dataset. We use pseudolabeling to automatically generate additional training data, allowing us to scale from tens of labeled examples to a much larger unlabeled pool. The current implementation emphasizes conservative pseudo-labeling and linear models because the hidden evaluation proved more sensitive to calibration than to model complexity.
 
-We evaluate an offline TF-IDF logistic-regression baseline, a self-training variant, and an optional frozen embedding branch. In practice, the strongest and fastest path so far is the linear TF-IDF plus self-training setup, which is easier to deploy on Grace and easier to reason about than a fully fine-tuned transformer.
+We evaluate an offline TF-IDF logistic-regression baseline, teacher-guided self-training, and an optional frozen embedding branch. The current pipeline compares a TF-IDF teacher against a frozen Bio\_ClinicalBERT teacher under the same SSL regime, then uses a separate calibration run to choose the final threshold and ensemble weights. This structure makes the SSL effect measurable rather than hiding it inside a single top-$k$ heuristic.
 
 Overall, this work highlights the importance of data-centric approaches in low-resource clinical NLP tasks and demonstrates how semi-supervised learning can bridge the gap between limited labeled data and practical model performance.
 
@@ -51,23 +51,26 @@ The current codebase is organized as an offline pipeline:
 \begin{itemize}
     \item sentence extraction and normalization for unlabeled MIMIC text
     \item TF-IDF vectorization over word and character n-grams
-    \item logistic regression with a small hyperparameter sweep
-    \item conservative pseudo-labeling on unlabeled text
+    \item teacher-guided threshold-based pseudo-labeling with gold/pseudo weighting
+    \item per-class pseudo-label caps and manifest logging
     \item leave-one-out threshold selection on the 20 labeled examples
+    \item isolated compare and calibration modes on Grace
 \end{itemize}
 
 \subsection{Pseudolabeling Strategy}
 
 We first train a baseline classifier using the available gold-labeled dataset. This model is then used to assign pseudolabels to unlabeled sentences extracted from the MIMIC-III corpus.
 
-In the current fast path, we use conservative self-training:
+In the current production path, we use conservative threshold-based self-training:
 \begin{itemize}
-    \item one self-training round
-    \item high confidence thresholds for pseudo-label acceptance
-    \item lower sample weight for pseudo-labeled examples than gold labels
+    \item 1--2 self-training rounds
+    \item high positive and negative confidence thresholds
+    \item explicit gold-weight and pseudo-weight settings
+    \item per-class pseudo-label caps per round
+    \item a per-run pseudo-label manifest that records accepted rows, scores, and sources
 \end{itemize}
 
-This keeps the method simple and reduces the chance that noisy pseudo-labels dominate the 20 gold examples.
+This keeps the method simple and reduces the chance that noisy pseudo-labels dominate the 20 gold examples. The top-$k$ rank-based path still exists for smoke tests, but the current Grace jobs use threshold-based SSL as the default.
 
 \subsection{Model Architectures}
 
@@ -77,10 +80,10 @@ We evaluate two practical model families and one optional branch.
 We use a TF-IDF representation of text as input to a logistic regression classifier. This model serves as both a baseline and a final submission candidate due to its strong performance in low-resource settings.
 
 \subsubsection{Self-Training Variant}
-We retrain the TF-IDF model after adding conservative pseudo-labels from the unlabeled MIMIC pool. In the final Slurm configuration, this is the main model selection path.
+We retrain the TF-IDF model after adding conservative pseudo-labels from the unlabeled MIMIC pool. The SSL teacher can be either a TF-IDF classifier or a frozen Bio\_ClinicalBERT encoder, but the student remains a lightweight TF-IDF logistic model. The current Grace workflow compares teachers under the same student setup and then calibrates the chosen configuration.
 
 \subsubsection{Optional Embedding Branch}
-We also implemented a frozen Bio\_ClinicalBERT embedding model with a logistic-regression head. This branch remains in the codebase for comparison, but the faster grading path disables it because it did not justify its runtime cost in the latest runs.
+We also implemented a frozen Bio\_ClinicalBERT embedding model with a logistic-regression head. This branch remains in the codebase both as an optional ensemble component and as a teacher for SSL pseudo-label generation. Whether it is kept in the final ensemble depends on the comparison and calibration runs.
 
 \subsection{Training Procedure}
 
@@ -88,9 +91,10 @@ All models are trained in an offline setting with a maximum input length of 128 
 
 \begin{enumerate}
     \item Extract and normalize candidate sentences from MIMIC-III notes
-    \item Train TF-IDF logistic-regression models on the 20 gold labels
-    \item Generate conservative pseudo-labels on the unlabeled pool
-    \item Sweep a small set of TF-IDF and logistic-regression hyperparameters
+    \item Train a teacher-guided TF-IDF self-training student on the unlabeled pool
+    \item Log accepted pseudo-labels to a per-run manifest
+    \item Compare TF-IDF-teacher and Bio\_ClinicalBERT-teacher runs under the same SSL settings
+    \item Run a narrower calibration sweep on the better teacher
     \item Select a single global threshold using leave-one-out validation
     \item Predict the three submission files offline
 \end{enumerate}
@@ -101,31 +105,29 @@ The implementation also normalizes prediction text with the same vectorizer sett
 
 \subsection{Experimental Setup}
 
-We evaluate multiple model configurations to study the effect of data quality, scale, and model choice. All models are tested on three held-out datasets (test01, test02, test03). Since ground-truth labels are not available for these test sets, evaluation is based on the Gradescope autograder and on leave-one-out validation over the gold dataset.
+We evaluate multiple model configurations to study the effect of teacher choice, data scale, and calibration. All models are tested on three held-out datasets (test01, test02, test03). Since ground-truth labels are not available for these test sets, evaluation is based on the Gradescope autograder and on leave-one-out validation over the gold dataset.
 
-The current implementation on Grace uses a fast TF-IDF plus self-training path with no embedding model. The Slurm job extracts unlabeled sentences, sweeps a small hyperparameter grid, saves the best model, and writes prediction files for the three submission splits.
+The current implementation on Grace uses isolated batch runs with per-job output directories. Compare jobs keep the final threshold fixed while contrasting TF-IDF and Bio\_ClinicalBERT teachers; calibration jobs then sweep a narrow linear-model grid. This avoids output collisions and makes it possible to inspect pseudo-label manifests, training summaries, and predictions from each run separately.
 
 \subsection{Results}
 
 \begin{table}[h]
-\caption{Current Results Summary}
+\caption{Previous Processed Submission Summary}
 \centering
 \begin{tabular}{|c|c|}
 \hline
 Metric & Value \\
 \hline
-Gradescope score & 29/60 \\
+Gradescope score & 22/60 \\
 Shape test & 5/5 \\
 Internal feedback test & 0/10 \\
-Internal hidden test & 8/20 \\
-External hidden test & 16/25 \\
+Internal hidden test & 2/20 \\
+External hidden test & 15/25 \\
 \hline
 \end{tabular}
 \end{table}
 
-The latest processed Gradescope submission scored 29/60. The output shape is correct, but the internal and external hidden metrics remain below the threshold needed for full credit. The feedback run reported accuracy of 0.6203 and F1 of 0.4231 on its internal sample, which suggests that the classifier is still missing important boundary cases.
-
-On the gold labels, the current sweep machinery can reach roughly 0.80 F1 in leave-one-out validation for some settings, but that performance does not transfer cleanly to the hidden test sets. This is consistent with a small-data regime where thresholding, pseudo-label quality, and preprocessing details matter as much as the model family.
+Earlier teacher-ablation submissions plateaued at 22/60, which showed that the old capped top-$k$ SSL path was too small to move the hidden score. The current pipeline was rebuilt specifically to expose a larger SSL signal and to make teacher comparisons more faithful. On the gold labels, the revised sweep machinery still reaches strong leave-one-out F1 for some settings, but the hidden test score now depends on whether the fuller SSL regime improves precision rather than overfitting the 20 labeled examples.
 
 \subsection{Validation Results}
 
@@ -133,13 +135,13 @@ To supplement test-set analysis, we evaluate the gold-labeled data with leave-on
 
 \section{Discussion}
 
-The main lesson so far is that this task is dominated by calibration and data quality, not model depth. The embedding branch has not delivered consistent hidden-set gains, while the linear TF-IDF path remains competitive and much cheaper to run. That is why the current batch pipeline prioritizes a conservative TF-IDF plus self-training configuration.
+The main lesson so far is that this task is dominated by calibration and data quality, not model depth. The embedding branch has not delivered consistent hidden-set gains, while the linear TF-IDF path remains competitive and much cheaper to run. That is why the current batch pipeline prioritizes a conservative TF-IDF plus self-training configuration with explicit caps and gold-weight control.
 
-The hidden scores also suggest that the model is still over-triggering on some generic clinical language. The most likely improvements now are not larger models, but tighter thresholding, cleaner pseudo-labeling, and a careful sweep over class weighting and regularization.
+The hidden scores also suggest that the model is still over-triggering on some generic clinical language. The most likely improvements now are not larger models, but tighter thresholding, cleaner pseudo-labeling, explicit control over gold-vs-pseudo influence, and a careful sweep over class weighting and regularization.
 
-Another practical finding is that preprocessing consistency matters. Normalizing text during both training and prediction avoids a feature mismatch that can silently depress performance. That fix is already in the codebase.
+Another practical finding is that preprocessing consistency matters. Normalizing text during both training and prediction avoids a feature mismatch that can silently depress performance. The same applies operationally on Grace: per-job run directories and stage logging are now required so that compare and calibration jobs can be inspected independently.
 
-The remaining limitation is that we still have only 20 labeled examples. Even with semi-supervised learning, the model can fit the gold set very well while still underperforming on the hidden evaluation. The current 29/60 submission confirms that the pipeline is functional but not yet tuned enough for the grader.
+The remaining limitation is that we still have only 20 labeled examples. Even with semi-supervised learning, the model can fit the gold set very well while still underperforming on the hidden evaluation. The current implementation is therefore focused on making the SSL signal larger and more controlled, rather than adding more model complexity.
 
 \section{Generative AI Disclosure}
 
@@ -166,9 +168,9 @@ All model design, training, experimentation, and evaluation were implemented and
 
 In this work, we addressed the problem of identifying ICD-codable medical information in clinical text under extreme data scarcity. Starting from only 20 labeled examples, we built an offline semi-supervised pipeline that combines TF-IDF features, logistic regression, conservative pseudo-labeling, and a single global decision threshold.
 
-The current implementation is working end to end on Grace and generates the required submission files without external APIs or online dependencies. The latest submitted model currently scores 29/60 on Gradescope, which is enough to show that the pipeline is functional but not yet tuned to the level needed for a strong hidden score.
+The current implementation is working end to end on Grace and generates the required submission files without external APIs or online dependencies. It now includes teacher-guided threshold SSL, gold/pseudo weighting, pseudo-label caps, manifest logging, isolated compare/calibration runs, and a CUDA-capable Grace configuration for the optional transformer branch. Earlier submissions demonstrated that the pipeline was functional but not yet tuned to the level needed for a strong hidden score.
 
-Future work should focus on the highest-payoff changes first: tighter threshold tuning, smaller and cleaner pseudo-label sets, and additional calibration work on the linear model path. Those changes are more likely to improve the hidden metrics than reintroducing heavier embeddings.
+Future work should focus on the highest-payoff changes first: teacher comparison at full SSL scale, pseudo-label volume and class-balance control, and additional calibration work on the linear model path. Those changes are more likely to improve the hidden metrics than reintroducing heavier embeddings or widening the hyperparameter grid.
 
 \begin{thebibliography}{1}
 
