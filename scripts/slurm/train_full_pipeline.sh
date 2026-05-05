@@ -6,8 +6,8 @@
 #SBATCH --mem=24G
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=4
-#SBATCH --output=logs/icd-full-pipeline-%j.out
-#SBATCH --error=logs/icd-full-pipeline-%j.err
+#SBATCH --output=/scratch/user/kcao/csce421-final-project-artifacts/logs/icd-full-pipeline-%j.out
+#SBATCH --error=/scratch/user/kcao/csce421-final-project-artifacts/logs/icd-full-pipeline-%j.err
 
 set -euo pipefail
 
@@ -16,14 +16,15 @@ log() {
 }
 
 PROJECT_DIR="${PROJECT_DIR:-${SCRATCH:?SCRATCH is not set}/csce421-final-project}"
+JOB_ROOT="${JOB_ROOT:-${SCRATCH:?SCRATCH is not set}/csce421-final-project-artifacts}"
 PIPELINE_MODE="${PIPELINE_MODE:-compare}"
 SSL_TEACHER_MODE="${SSL_TEACHER_MODE:-tfidf}"
 TEACHER_TAG="${SSL_TEACHER_MODE}"
 RUN_TAG="${RUN_TAG:-${SLURM_JOB_ID:-manual}-${PIPELINE_MODE}-${TEACHER_TAG}}"
-RUN_DIR="${RUN_DIR:-$PROJECT_DIR/runs/$RUN_TAG}"
-TRAIN_CSV="${TRAIN_CSV:-$PROJECT_DIR/data/raw/train_data-text_and_labels.csv}"
-NOTES_CSV_GZ="${NOTES_CSV_GZ:-/home/kcao/projects/csce421-final-project/data/raw/NOTEEVENTS.csv.gz}"
-UNLABELED_CSV="${UNLABELED_CSV:-$PROJECT_DIR/data/processed/unlabeled_mimic.csv}"
+RUN_DIR="${RUN_DIR:-$JOB_ROOT/runs/$RUN_TAG}"
+TRAIN_CSV="${TRAIN_CSV:-$JOB_ROOT/data/raw/train_data-text_and_labels.csv}"
+NOTES_CSV_GZ="${NOTES_CSV_GZ:-$JOB_ROOT/data/raw/NOTEEVENTS.csv.gz}"
+UNLABELED_CSV="${UNLABELED_CSV:-$JOB_ROOT/data/processed/unlabeled_mimic.csv}"
 MODEL_OUT="${MODEL_OUT:-$RUN_DIR/models/model.joblib}"
 SUMMARY_OUT="${SUMMARY_OUT:-$RUN_DIR/models/training_summary.json}"
 SWEEP_OUT="${SWEEP_OUT:-$RUN_DIR/models/sweep_summary.json}"
@@ -54,7 +55,7 @@ fi
 
 log "pipeline start mode=$PIPELINE_MODE teacher=$SSL_TEACHER_MODE run_tag=$RUN_TAG"
 log "run_dir=$RUN_DIR"
-mkdir -p "$PROJECT_DIR/logs" "$PROJECT_DIR/models" "$PROJECT_DIR/outputs" "$PROJECT_DIR/data/processed" "$RUN_DIR/models" "$PRED_DIR" "$DEBUG_DIR"
+mkdir -p "$JOB_ROOT/logs" "$JOB_ROOT/data/raw" "$JOB_ROOT/data/processed" "$JOB_ROOT/runs" "$RUN_DIR/models" "$PRED_DIR" "$DEBUG_DIR"
 cd "$PROJECT_DIR"
 ln -sfn "$RUN_DIR" "$PROJECT_DIR/latest-run-$RUN_TAG"
 
@@ -167,10 +168,10 @@ log "predictions finished"
 if [ "$PUBLISH_ROOT_OUTPUTS" != "0" ]; then
   log "publishing root outputs"
   for split in test01 test02 test03; do
-    cp "$PRED_DIR/${split}-pred.csv" "$PROJECT_DIR/${split}-pred.csv"
-    cp "$DEBUG_DIR/${split}-debug.csv" "$PROJECT_DIR/outputs/${split}-debug.csv"
+    cp "$PRED_DIR/${split}-pred.csv" "$JOB_ROOT/${split}-pred.csv"
+    cp "$DEBUG_DIR/${split}-debug.csv" "$JOB_ROOT/${split}-debug.csv"
   done
-  cp "$SUMMARY_OUT" "$PROJECT_DIR/models/training_summary.json"
-  cp "$MODEL_OUT" "$PROJECT_DIR/models/model.joblib"
+  cp "$SUMMARY_OUT" "$JOB_ROOT/training_summary.json"
+  cp "$MODEL_OUT" "$JOB_ROOT/model.joblib"
 fi
 log "pipeline complete"
