@@ -23,6 +23,11 @@ UNLABELED_LIMIT="${UNLABELED_LIMIT:-3000}"
 REPLACE_NUMBERS="${REPLACE_NUMBERS:-1}"
 WEIGHT_STEP="${WEIGHT_STEP:-0.1}"
 THRESHOLD_STEP="${THRESHOLD_STEP:-0.01}"
+SSL_ROUNDS="${SSL_ROUNDS:-1}"
+SSL_POSITIVE_CONFIDENCE="${SSL_POSITIVE_CONFIDENCE:-0.95}"
+SSL_NEGATIVE_CONFIDENCE="${SSL_NEGATIVE_CONFIDENCE:-0.05}"
+SSL_PSEUDO_WEIGHT="${SSL_PSEUDO_WEIGHT:-0.2}"
+SSL_RANK_MODE="${SSL_RANK_MODE:-0}"
 
 mkdir -p "$PROJECT_DIR/logs" "$PROJECT_DIR/models" "$PROJECT_DIR/outputs" "$PROJECT_DIR/data/processed"
 cd "$PROJECT_DIR"
@@ -48,11 +53,18 @@ SWEEP_ARGS=(
   --max-unlabeled "$MAX_UNLABELED"
   --weight-step "$WEIGHT_STEP"
   --threshold-step "$THRESHOLD_STEP"
+  --ssl-rounds "$SSL_ROUNDS"
+  --ssl-positive-confidence "$SSL_POSITIVE_CONFIDENCE"
+  --ssl-negative-confidence "$SSL_NEGATIVE_CONFIDENCE"
+  --ssl-pseudo-weight "$SSL_PSEUDO_WEIGHT"
   --model-output "$MODEL_OUT"
   --output "$SWEEP_OUT"
 )
 if [ "$REPLACE_NUMBERS" != "0" ]; then
   SWEEP_ARGS=(--replace-numbers "${SWEEP_ARGS[@]}")
+fi
+if [ "$SSL_RANK_MODE" != "0" ]; then
+  SWEEP_ARGS=(--ssl-rank-mode "${SWEEP_ARGS[@]}")
 fi
 "$PYTHON" -m src.sweep "${SWEEP_ARGS[@]}"
 cp "$SWEEP_OUT" "$SUMMARY_OUT"

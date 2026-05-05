@@ -22,6 +22,13 @@ def build_parser():
     p.add_argument('--include-ssl', action='store_true', help='Include SSL component candidates')
     p.add_argument('--weight-step', type=float, default=0.1)
     p.add_argument('--threshold-step', type=float, default=0.01)
+    p.add_argument('--ssl-rounds', type=int, default=1, help='Number of SSL self-training rounds')
+    p.add_argument('--ssl-positive-confidence', type=float, default=0.95, help='Positive pseudo-label confidence threshold')
+    p.add_argument('--ssl-negative-confidence', type=float, default=0.05, help='Negative pseudo-label confidence threshold')
+    p.add_argument('--ssl-pseudo-weight', type=float, default=0.2, help='Sample weight for pseudo-labeled rows')
+    p.add_argument('--ssl-rank-mode', action='store_true', help='Use rank-based pseudo-labeling when embeddings are enabled')
+    p.add_argument('--ssl-rank-top-k', type=int, default=20, help='Top-K for rank-based pseudo-labeling')
+    p.add_argument('--ssl-max-pool', type=int, default=500, help='Max unlabeled pool for rank-based pseudo-labeling')
     return p
 
 
@@ -60,7 +67,16 @@ def main(argv=None):
     texts = list(texts)
     labels = list(labels)
     unlabeled = _load_unlabeled(args.unlabeled, args.max_unlabeled, replace_numbers=args.replace_numbers)
-    ssl_cfg = SelfTrainingConfig(enabled=args.include_ssl)
+    ssl_cfg = SelfTrainingConfig(
+        enabled=args.include_ssl,
+        rounds=args.ssl_rounds,
+        positive_confidence=args.ssl_positive_confidence,
+        negative_confidence=args.ssl_negative_confidence,
+        pseudo_weight=args.ssl_pseudo_weight,
+        rank_mode=args.ssl_rank_mode,
+        rank_top_k=args.ssl_rank_top_k,
+        max_pool=args.ssl_max_pool,
+    )
 
     results = []
     for name, vectorizer_cfg, logistic_cfg in _candidate_grid(args.replace_numbers):
