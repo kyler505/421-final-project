@@ -6,7 +6,7 @@ from pathlib import Path
 
 from .data import read_examples
 from .model import load_bundle, predict_component_proba
-from .text import has_strong_negation
+from .text import has_strong_negation, normalize_for_vectorizer, truncate_words
 
 
 def build_parser():
@@ -26,7 +26,9 @@ def main(argv=None):
     bundle = load_bundle(args.model)
     threshold = bundle.threshold if args.threshold is None else args.threshold
     rows = read_examples(args.input)
-    texts = [r.text for r in rows]
+    vectorizer_cfg = bundle.metadata.get('vectorizer_cfg', {})
+    replace_numbers = bool(vectorizer_cfg.get('replace_numbers', False))
+    texts = [truncate_words(normalize_for_vectorizer(r.text, replace_numbers=replace_numbers)) for r in rows]
     row_ids = [r.row_id for r in rows]
     probs = predict_component_proba(bundle, texts, args.component)
     preds = [1 if p >= threshold else 0 for p in probs]

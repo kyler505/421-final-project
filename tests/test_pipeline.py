@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 
+import src.predict as predict_module
 from src.config import LogisticConfig, SelfTrainingConfig, VectorizerConfig
 from src.data import read_labeled_dataset
 from src.model import fit_full_pipeline, metrics_at_threshold, predict_component_proba
@@ -68,3 +69,36 @@ def test_train_save_predict_debug(tmp_path):
         assert next(csv.reader(f)) == ["row_id", "prediction"]
     with debug_path.open(newline="", encoding="utf-8") as f:
         assert next(csv.reader(f)) == ["row_id", "text", "probability", "prediction"]
+
+
+def test_predict_applies_saved_vectorizer_normalization(tmp_path, monkeypatch):
+    class FakeBundle:
+        threshold = 0.5
+        metadata = {"vectorizer_cfg": {"replace_numbers": True}}
+
+    seen = {}
+
+    def fake_load_bundle(_path):
+        return FakeBundle()
+
+    def fake_predict_component_proba(_bundle, texts, _component):
+        seen["texts"] = texts
+        return [0.6]
+
+    monkeypatch.setattr(predict_module, "load_bundle", fake_load_bundle)
+    monkeypatch.setattr(predict_module, "predict_component_proba", fake_predict_component_proba)
+
+    test_path = tmp_path / "test.csv"
+    pred_path = tmp_path / "pred.csv"
+    _write_csv(test_path, [{"row_id": "10", "text": "BP 120/80"}], include_label=False)
+
+    predict_main([
+        "--model",
+        str(tmp_path / "model.joblib"),
+        "--input",
+        str(test_path),
+        "--output",
+        str(pred_path),
+    ])
+
+    assert seen["texts"] == ["bp <NUM>"]

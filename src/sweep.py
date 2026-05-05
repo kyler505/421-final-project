@@ -8,7 +8,7 @@ from pathlib import Path
 from .config import LogisticConfig, MAX_WORDS, SelfTrainingConfig, VectorizerConfig
 from .data import read_examples, read_labeled_dataset
 from .model import cross_validated_component_probs, fit_full_pipeline, metrics_at_threshold, save_bundle, search_weights_and_threshold
-from .text import deduplicate_texts
+from .text import deduplicate_texts, normalize_for_vectorizer, truncate_words
 
 
 def build_parser():
@@ -25,11 +25,11 @@ def build_parser():
     return p
 
 
-def _load_unlabeled(paths: list[str], max_rows: int = 0) -> list[str]:
+def _load_unlabeled(paths: list[str], max_rows: int = 0, replace_numbers: bool = False) -> list[str]:
     texts: list[str] = []
     for path in paths:
         for row in read_examples(path):
-            texts.append(row.text)
+            texts.append(truncate_words(normalize_for_vectorizer(row.text, replace_numbers=replace_numbers), MAX_WORDS))
             if max_rows and len(texts) >= max_rows:
                 return deduplicate_texts(texts)
     return deduplicate_texts(texts)
@@ -59,7 +59,7 @@ def main(argv=None):
     _, texts, labels = zip(*labeled)
     texts = list(texts)
     labels = list(labels)
-    unlabeled = _load_unlabeled(args.unlabeled, args.max_unlabeled)
+    unlabeled = _load_unlabeled(args.unlabeled, args.max_unlabeled, replace_numbers=args.replace_numbers)
     ssl_cfg = SelfTrainingConfig(enabled=args.include_ssl)
 
     results = []

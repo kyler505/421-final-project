@@ -19,7 +19,7 @@ EMBEDDING_MODEL="${EMBEDDING_MODEL:-$PROJECT_DIR/models/pretrained/Bio_ClinicalB
 MODEL_OUT="${MODEL_OUT:-$PROJECT_DIR/models/model.joblib}"
 SUMMARY_OUT="${SUMMARY_OUT:-$PROJECT_DIR/models/training_summary.json}"
 SWEEP_OUT="${SWEEP_OUT:-$PROJECT_DIR/models/sweep_summary.json}"
-MAX_UNLABELED="${MAX_UNLABELED:-5000}"
+MAX_UNLABELED="${MAX_UNLABELED:-500}"
 UNLABELED_LIMIT="${UNLABELED_LIMIT:-20000}"
 
 mkdir -p "$PROJECT_DIR/logs" "$PROJECT_DIR/models" "$PROJECT_DIR/outputs" "$PROJECT_DIR/data/processed"

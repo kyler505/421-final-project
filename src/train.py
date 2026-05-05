@@ -9,7 +9,7 @@ from sklearn.metrics import accuracy_score, classification_report, f1_score, pre
 from .config import EmbeddingConfig, LogisticConfig, MAX_WORDS, SelfTrainingConfig, VectorizerConfig
 from .data import read_examples, read_labeled_dataset
 from .model import fit_full_pipeline, predict_component_proba, save_bundle
-from .text import deduplicate_texts
+from .text import deduplicate_texts, normalize_for_vectorizer, truncate_words
 
 
 def build_parser():
@@ -33,11 +33,11 @@ def build_parser():
     return p
 
 
-def _load_unlabeled(paths: list[str], max_rows: int = 0) -> list[str]:
+def _load_unlabeled(paths: list[str], max_rows: int = 0, replace_numbers: bool = False) -> list[str]:
     texts: list[str] = []
     for path in paths:
         for row in read_examples(path):
-            texts.append(row.text)
+            texts.append(truncate_words(normalize_for_vectorizer(row.text, replace_numbers=replace_numbers), MAX_WORDS))
             if max_rows and len(texts) >= max_rows:
                 return deduplicate_texts(texts)
     return deduplicate_texts(texts)
@@ -54,7 +54,11 @@ def main(argv=None):
     args = build_parser().parse_args(argv)
     labeled = read_labeled_dataset(args.train, max_words=MAX_WORDS, replace_numbers=args.replace_numbers)
     row_ids, texts, labels = zip(*labeled)
-    unlabeled_texts = _load_unlabeled(args.unlabeled, max_rows=args.max_unlabeled)
+    unlabeled_texts = _load_unlabeled(
+        args.unlabeled,
+        max_rows=args.max_unlabeled,
+        replace_numbers=args.replace_numbers,
+    )
 
     ssl_cfg = SelfTrainingConfig(enabled=not args.no_self_training)
     embedding_cfg = None if args.no_embeddings else EmbeddingConfig(model_name=args.embedding_model)
