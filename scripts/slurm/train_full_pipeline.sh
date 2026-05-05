@@ -107,6 +107,7 @@ fi
 
 if [ "$PIPELINE_MODE" = "compare" ]; then
   log "running compare training"
+  log "compare settings cache=$UNLABELED_CACHE teacher=$SSL_TEACHER_MODE rounds=$SSL_ROUNDS gold_weight=$SSL_GOLD_WEIGHT pseudo_weight=$SSL_PSEUDO_WEIGHT max_per_class=$SSL_MAX_PSEUDO_PER_CLASS_PER_ROUND manifest_input=${PSEUDO_MANIFEST_INPUT:-none}"
   TRAIN_ARGS=(
     --train "$TRAIN_CSV"
     --unlabeled "$UNLABELED_CACHE"
@@ -125,6 +126,7 @@ if [ "$PIPELINE_MODE" = "compare" ]; then
     --pseudo-manifest-output "$PSEUDO_MANIFEST_OUT"
   )
   if [ -n "$PSEUDO_MANIFEST_INPUT" ]; then
+    log "reusing pseudo manifest $PSEUDO_MANIFEST_INPUT"
     TRAIN_ARGS=(--pseudo-manifest-input "$PSEUDO_MANIFEST_INPUT" "${TRAIN_ARGS[@]}")
   fi
   if [ "$REPLACE_NUMBERS" != "0" ]; then
@@ -162,6 +164,7 @@ elif [ "$PIPELINE_MODE" = "calibrate" ]; then
     --calibration-mode
   )
   if [ -n "$PSEUDO_MANIFEST_INPUT" ]; then
+    log "reusing pseudo manifest $PSEUDO_MANIFEST_INPUT"
     SWEEP_ARGS=(--pseudo-manifest-input "$PSEUDO_MANIFEST_INPUT" "${SWEEP_ARGS[@]}")
   fi
   if [ "$REPLACE_NUMBERS" != "0" ]; then

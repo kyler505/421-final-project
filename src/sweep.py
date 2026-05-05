@@ -109,6 +109,7 @@ def main(argv=None):
 
     results = []
     for name, vectorizer_cfg, logistic_cfg in _candidate_grid(args.replace_numbers, calibration_mode=args.calibration_mode):
+        print(f"[candidate:start] {name} vectorizer={asdict(vectorizer_cfg)} logistic={asdict(logistic_cfg)}", flush=True)
         component_probs = cross_validated_component_probs(
             texts,
             labels,
@@ -142,7 +143,7 @@ def main(argv=None):
                 'component_metrics': component_metrics,
             }
         )
-        print(name, results[-1]['metrics'], results[-1]['weights'], flush=True)
+        print(f"[candidate:end] {name} metrics={results[-1]['metrics']} weights={results[-1]['weights']} threshold={results[-1]['threshold']:.3f}", flush=True)
 
     results.sort(key=lambda r: (r['metrics']['f1'], r['metrics']['precision'], r['metrics']['accuracy'], r['metrics']['recall']), reverse=True)
     summary = {'best': results[0], 'results': results}

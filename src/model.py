@@ -388,6 +388,10 @@ def fit_self_training_tfidf(
     if pseudo_manifest_input:
         pseudo_texts, pseudo_labels, pseudo_weights = _manifest_to_pseudo_examples(pseudo_manifest_input)
         if pseudo_texts:
+            print(
+                f"[ssl:manifest] reused={len(pseudo_texts)} positives={sum(pseudo_labels)} negatives={len(pseudo_labels) - sum(pseudo_labels)}",
+                flush=True,
+            )
             combined_texts.extend(pseudo_texts)
             combined_labels.extend(pseudo_labels)
             sample_weight.extend([ssl_cfg.pseudo_weight * float(w) for w in pseudo_weights])
@@ -555,6 +559,10 @@ def fit_self_training_tfidf(
             'max_pseudo_per_class_per_round': ssl_cfg.max_pseudo_per_class_per_round,
         }
         if not keep_texts:
+            print(
+                f"[ssl:round] round={round_idx + 1} teacher={scorer_name} accepted_pos=0 accepted_neg=0 remaining={len(remaining_texts)}",
+                flush=True,
+            )
             summary.round_stats.append(
                 {
                     **round_stat,
@@ -582,6 +590,10 @@ def fit_self_training_tfidf(
         summary.rounds_completed = round_idx + 1
         round_stat['remaining_after_round'] = len(remaining_texts)
         summary.round_stats.append(round_stat)
+        print(
+            f"[ssl:round] round={round_idx + 1} teacher={scorer_name} accepted_pos={len(positive_candidates)} accepted_neg={len(negative_candidates)} remaining={len(remaining_texts)}",
+            flush=True,
+        )
     final_model = fit_tfidf_model(combined_texts, combined_labels, vectorizer_cfg, sample_weight=sample_weight, logistic_cfg=logistic_cfg)
     final_model.pseudo_rows = summary.pseudo_rows
     return final_model, summary
