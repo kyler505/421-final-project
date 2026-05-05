@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 #SBATCH --job-name=icd-data-prep
-#SBATCH --partition=cpu
 #SBATCH --time=04:00:00
 #SBATCH --mem=32G
 #SBATCH --ntasks=1
