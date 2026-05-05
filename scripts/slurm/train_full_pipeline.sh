@@ -19,8 +19,8 @@ EMBEDDING_MODEL="${EMBEDDING_MODEL:-$PROJECT_DIR/models/pretrained/Bio_ClinicalB
 MODEL_OUT="${MODEL_OUT:-$PROJECT_DIR/models/model.joblib}"
 SUMMARY_OUT="${SUMMARY_OUT:-$PROJECT_DIR/models/training_summary.json}"
 SWEEP_OUT="${SWEEP_OUT:-$PROJECT_DIR/models/sweep_summary.json}"
-MAX_UNLABELED="${MAX_UNLABELED:-500}"
-UNLABELED_LIMIT="${UNLABELED_LIMIT:-20000}"
+MAX_UNLABELED="${MAX_UNLABELED:-200}"
+UNLABELED_LIMIT="${UNLABELED_LIMIT:-5000}"
 
 mkdir -p "$PROJECT_DIR/logs" "$PROJECT_DIR/models" "$PROJECT_DIR/outputs" "$PROJECT_DIR/data/processed"
 cd "$PROJECT_DIR"
@@ -29,12 +29,15 @@ module purge
 module load GCC/13.3.0 OpenMPI/5.0.3 PyTorch/2.6.0 Transformers/4.55.0 scikit-learn/1.6.1
 
 PYTHON="${PYTHON:-python}"
-"$PYTHON" - <<'PY'
+CUDA_AVAILABLE="$("$PYTHON" - <<'PY'
 import sklearn, torch, transformers
 print("sklearn", sklearn.__version__)
 print("torch", torch.__version__, "cuda", torch.cuda.is_available())
 print("transformers", transformers.__version__)
+print("1" if torch.cuda.is_available() else "0")
 PY
+)"
+CUDA_AVAILABLE="${CUDA_AVAILABLE##*$'\n'}"
 
 "$PYTHON" -m src.prepare_unlabeled \
   --notes "$NOTES_CSV_GZ" \
@@ -48,14 +51,25 @@ PY
   --max-unlabeled "$MAX_UNLABELED" \
   --output "$SWEEP_OUT"
 
-"$PYTHON" -m src.train \
-  --train "$TRAIN_CSV" \
-  --unlabeled "$UNLABELED_CSV" \
-  --max-unlabeled "$MAX_UNLABELED" \
-  --embedding-model "$EMBEDDING_MODEL" \
-  --fixed-plan-weights \
-  --output "$MODEL_OUT" \
-  --summary-output "$SUMMARY_OUT"
+if [ "$CUDA_AVAILABLE" = "1" ]; then
+  "$PYTHON" -m src.train \
+    --train "$TRAIN_CSV" \
+    --unlabeled "$UNLABELED_CSV" \
+    --max-unlabeled "$MAX_UNLABELED" \
+    --embedding-model "$EMBEDDING_MODEL" \
+    --fixed-plan-weights \
+    --output "$MODEL_OUT" \
+    --summary-output "$SUMMARY_OUT"
+else
+  "$PYTHON" -m src.train \
+    --train "$TRAIN_CSV" \
+    --unlabeled "$UNLABELED_CSV" \
+    --max-unlabeled "$MAX_UNLABELED" \
+    --no-embeddings \
+    --fixed-plan-weights \
+    --output "$MODEL_OUT" \
+    --summary-output "$SUMMARY_OUT"
+fi
 
 for split in test01 test02 test03; do
   "$PYTHON" -m src.predict \
