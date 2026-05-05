@@ -105,14 +105,15 @@ def main(argv=None):
     useful_categories = {'Discharge summary', 'Radiology'}
     
     positive_candidates = []
-    negative_candidates = []
+    clinical_negative_candidates = [] # Sentences from non-ICD admissions
+    boilerplate_candidates = []
     
     # Process in chunks to save memory
     chunksize = 50000
     try:
         for chunk in pd.read_csv(note_events_file, compression='gzip', 
-                               chunksize=chunksize, 
-                               usecols=['ROW_ID', 'HADM_ID', 'CATEGORY', 'TEXT']):
+                                chunksize=chunksize, 
+                                usecols=['ROW_ID', 'HADM_ID', 'CATEGORY', 'TEXT']):
             
             # Filter by category
             filtered_chunk = chunk[chunk['CATEGORY'].isin(useful_categories)]
@@ -130,18 +131,23 @@ def main(argv=None):
                 for sent in sentences:
                     sent = sent.strip().replace('\n', ' ')
                     if is_boilerplate(sent):
-                        negative_candidates.append(sent)
+                        boilerplate_candidates.append(sent)
                     elif is_weakly_pos_adm:
                         positive_candidates.append(sent)
+                    else:
+                        # This is a clinical sentence from an admission with NO ICD codes.
+                        # This is a high-quality "Clinical Negative".
+                        clinical_negative_candidates.append(sent)
                     
             # Stop early if we have enough candidates to sample from
-            if len(positive_candidates) > args.sample_size * 10 and len(negative_candidates) > args.negative_sample_size * 10:
+            if len(positive_candidates) > args.sample_size * 5 and \
+               len(clinical_negative_candidates) > args.negative_sample_size * 5:
                 break
                 
     except Exception as e:
         print(f"Warning during chunk processing: {e}")
 
-    print(f"Collected {len(positive_candidates)} positive and {len(negative_candidates)} negative candidates.")
+    print(f"Collected {len(positive_candidates)} positive, {len(clinical_negative_candidates)} clinical negative, and {len(boilerplate_candidates)} boilerplate candidates.")
 
     # Sample
     final_rows = []
@@ -151,10 +157,17 @@ def main(argv=None):
     for i, text in enumerate(sampled_positives):
         final_rows.append({'row_id': f'weak_pos_{i}', 'text': text, 'label': 1})
         
-    # Sample negatives (heuristics)
-    sampled_negatives = random.sample(negative_candidates, min(len(negative_candidates), args.negative_sample_size))
-    for i, text in enumerate(sampled_negatives):
-        final_rows.append({'row_id': f'weak_neg_{i}', 'text': text, 'label': 0})
+    # Sample negatives: 70% clinical negatives, 30% boilerplate
+    n_clinical = int(args.negative_sample_size * 0.7)
+    n_boilerplate = args.negative_sample_size - n_clinical
+    
+    sampled_clin_neg = random.sample(clinical_negative_candidates, min(len(clinical_negative_candidates), n_clinical))
+    for i, text in enumerate(sampled_clin_neg):
+        final_rows.append({'row_id': f'clin_neg_{i}', 'text': text, 'label': 0})
+        
+    sampled_boilerplate = random.sample(boilerplate_candidates, min(len(boilerplate_candidates), n_boilerplate))
+    for i, text in enumerate(sampled_boilerplate):
+        final_rows.append({'row_id': f'boilerplate_{i}', 'text': text, 'label': 0})
 
     # Combine with gold labels
     if args.gold_labels.exists():

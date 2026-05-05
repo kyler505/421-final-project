@@ -30,6 +30,7 @@ def build_parser():
     p.add_argument('--penalty', default='l2', choices=['l1', 'l2', 'elasticnet'], help='LogisticRegression penalty')
     p.add_argument('--l1-ratio', type=float, default=None, help='Elastic-net l1_ratio when penalty=elasticnet')
     p.add_argument('--fixed-plan-weights', action='store_true', help='Use the plan weights: baseline=.5 ssl=.3 embedding=.2')
+    p.add_argument('--gold-weight', type=float, default=1.0, help='Weight multiplier for gold labeled examples')
     return p
 
 
@@ -68,6 +69,9 @@ def main(argv=None):
         fixed_weights = {'baseline': 0.5, 'ssl': 0.3, 'embedding': 0.2}
         if embedding_cfg is None:
             fixed_weights = {'baseline': 0.625, 'ssl': 0.375}
+
+    sample_weights = [args.gold_weight if str(rid).startswith('gold_') else 1.0 for rid in row_ids]
+
     bundle, report = fit_full_pipeline(
         list(texts),
         list(labels),
@@ -79,6 +83,7 @@ def main(argv=None):
         weight_step=args.weight_step,
         threshold_step=args.threshold_step,
         fixed_weights=fixed_weights,
+        sample_weight=sample_weights,
     )
 
     probs = predict_component_proba(bundle, list(texts), 'ensemble')

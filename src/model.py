@@ -278,6 +278,7 @@ def fit_self_training_tfidf(
     vectorizer_cfg: VectorizerConfig | None = None,
     ssl_cfg: SelfTrainingConfig | None = None,
     logistic_cfg: LogisticConfig | None = None,
+    gold_sample_weight: list[float] | None = None,
 ) -> tuple[TfidfBinaryModel, SelfTrainingSummary]:
     vectorizer_cfg = vectorizer_cfg or VectorizerConfig()
     ssl_cfg = ssl_cfg or SelfTrainingConfig()
@@ -285,7 +286,7 @@ def fit_self_training_tfidf(
 
     combined_texts = list(gold_texts)
     combined_labels = list(gold_labels)
-    sample_weight = [1.0] * len(gold_labels)
+    sample_weight = list(gold_sample_weight) if gold_sample_weight is not None else [1.0] * len(gold_labels)
     remaining = deduplicate_texts(unlabeled_texts or [])
     if not ssl_cfg.enabled or not remaining:
         model = fit_tfidf_model(combined_texts, combined_labels, vectorizer_cfg, sample_weight=sample_weight, logistic_cfg=logistic_cfg)
@@ -531,6 +532,7 @@ def fit_full_pipeline(
     weight_step: float = 0.1,
     threshold_step: float = 0.01,
     fixed_weights: dict[str, float] | None = None,
+    sample_weight: list[float] | None = None,
 ) -> tuple[EnsembleBundle, dict[str, Any]]:
     vectorizer_cfg = vectorizer_cfg or VectorizerConfig()
     ssl_cfg = ssl_cfg or SelfTrainingConfig()
@@ -569,7 +571,7 @@ def fit_full_pipeline(
         for name, probs in component_probs.items()
     }
 
-    baseline = fit_tfidf_model(gold_texts, gold_labels, vectorizer_cfg, logistic_cfg=logistic_cfg)
+    baseline = fit_tfidf_model(gold_texts, gold_labels, vectorizer_cfg, sample_weight=sample_weight, logistic_cfg=logistic_cfg)
 
     # Similarity-based SSL: use embedding similarity to find pseudo-labels
     # when absolute thresholds can't produce any (tiny dataset problem)
@@ -593,8 +595,7 @@ def fit_full_pipeline(
             ssl_summary.pseudo_negative = sum(1 for l in pseudo_labels if l == 0)
             # Train SSL-TF-IDF on gold + pseudo-labels
             combined_texts = list(gold_texts) + pseudo_texts
-            combined_labels = list(gold_labels) + pseudo_labels
-            combined_weights = [1.0] * len(gold_labels) + [ssl_cfg.pseudo_weight] * len(pseudo_labels)
+            combined_weights = (list(sample_weight) if sample_weight is not None else [1.0] * len(gold_labels)) + [ssl_cfg.pseudo_weight] * len(pseudo_labels)
             ssl_model = fit_tfidf_model(
                 combined_texts,
                 combined_labels,
@@ -604,12 +605,12 @@ def fit_full_pipeline(
             )
             ssl_model.pseudo_rows = len(pseudo_texts)
         else:
-            ssl_model, ssl_summary2 = fit_self_training_tfidf(gold_texts, gold_labels, unlabeled_texts, vectorizer_cfg, ssl_cfg, logistic_cfg=logistic_cfg)
+            ssl_model, ssl_summary2 = fit_self_training_tfidf(gold_texts, gold_labels, unlabeled_texts, vectorizer_cfg, ssl_cfg, logistic_cfg=logistic_cfg, gold_sample_weight=sample_weight)
             ssl_summary = ssl_summary2
     else:
-        ssl_model, ssl_summary = fit_self_training_tfidf(gold_texts, gold_labels, unlabeled_texts, vectorizer_cfg, ssl_cfg, logistic_cfg=logistic_cfg)
+        ssl_model, ssl_summary = fit_self_training_tfidf(gold_texts, gold_labels, unlabeled_texts, vectorizer_cfg, ssl_cfg, logistic_cfg=logistic_cfg, gold_sample_weight=sample_weight)
 
-    embedding_model = fit_embedding_model(gold_texts, gold_labels, embedding_cfg) if embedding_cfg is not None else None
+    embedding_model = fit_embedding_model(gold_texts, gold_labels, embedding_cfg, sample_weight=sample_weight) if embedding_cfg is not None else None
 
     bundle = EnsembleBundle(
         baseline=baseline,
