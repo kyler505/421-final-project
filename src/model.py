@@ -171,7 +171,7 @@ def fit_tfidf_model(
 
 
 def _rank_based_pseudo_labels(
-    model: EmbeddingBinaryModel,
+    model: Any,
     unlabeled_texts: list[str],
     top_k: int,
 ) -> tuple[list[str], list[int], list[float]]:
@@ -200,6 +200,26 @@ def _rank_based_pseudo_labels(
             weights.append(1.0 - float(probs[idx]))
             seen.add(txt)
     return texts, labels, weights
+
+
+def _resolve_teacher_model(
+    gold_texts: list[str],
+    gold_labels: list[int],
+    vectorizer_cfg: VectorizerConfig,
+    logistic_cfg: LogisticConfig | None,
+    teacher_mode: str | None,
+    teacher_cfg: EmbeddingConfig | None,
+) -> tuple[Any | None, str | None]:
+    mode = (teacher_mode or ('embedding' if teacher_cfg is not None else None))
+    if mode is None:
+        return None, None
+    mode = mode.lower()
+    if mode == 'tfidf':
+        return fit_tfidf_model(gold_texts, gold_labels, vectorizer_cfg, logistic_cfg=logistic_cfg), 'tfidf'
+    if mode == 'embedding':
+        cfg = teacher_cfg or EmbeddingConfig()
+        return fit_embedding_model(gold_texts, gold_labels, cfg), 'embedding'
+    raise ValueError(f'Unknown teacher mode: {teacher_mode}')
 
 
 def _similarity_based_pseudo_labels(
@@ -278,6 +298,7 @@ def fit_self_training_tfidf(
     vectorizer_cfg: VectorizerConfig | None = None,
     ssl_cfg: SelfTrainingConfig | None = None,
     logistic_cfg: LogisticConfig | None = None,
+    teacher_mode: str | None = None,
     teacher_cfg: EmbeddingConfig | None = None,
 ) -> tuple[TfidfBinaryModel, SelfTrainingSummary]:
     vectorizer_cfg = vectorizer_cfg or VectorizerConfig()
@@ -293,8 +314,17 @@ def fit_self_training_tfidf(
         model.pseudo_rows = 0
         return model, summary
 
-    if ssl_cfg.rank_mode and teacher_cfg is not None:
-        teacher_model = fit_embedding_model(gold_texts, gold_labels, teacher_cfg)
+    if ssl_cfg.rank_mode:
+        teacher_model, _ = _resolve_teacher_model(
+            gold_texts,
+            gold_labels,
+            vectorizer_cfg,
+            logistic_cfg,
+            teacher_mode,
+            teacher_cfg,
+        )
+        if teacher_model is None:
+            teacher_model = fit_tfidf_model(gold_texts, gold_labels, vectorizer_cfg, sample_weight=sample_weight, logistic_cfg=logistic_cfg)
         pseudo_texts, pseudo_labels, pseudo_weights = _rank_based_pseudo_labels(
             teacher_model,
             remaining,
@@ -501,6 +531,7 @@ def cross_validated_component_probs(
     vectorizer_cfg: VectorizerConfig | None = None,
     ssl_cfg: SelfTrainingConfig | None = None,
     embedding_cfg: EmbeddingConfig | None = None,
+    teacher_mode: str | None = None,
     teacher_cfg: EmbeddingConfig | None = None,
     logistic_cfg: LogisticConfig | None = None,
 ) -> dict[str, np.ndarray]:
@@ -527,6 +558,7 @@ def cross_validated_component_probs(
             vectorizer_cfg,
             ssl_cfg,
             logistic_cfg=logistic_cfg,
+            teacher_mode=teacher_mode,
             teacher_cfg=teacher_cfg,
         )
         probs['baseline'][test_idx[0]] = float(baseline.predict_proba(test_text)[0])
@@ -544,11 +576,13 @@ def fit_full_pipeline(
     vectorizer_cfg: VectorizerConfig | None = None,
     ssl_cfg: SelfTrainingConfig | None = None,
     embedding_cfg: EmbeddingConfig | None = None,
+    teacher_mode: str | None = None,
     teacher_cfg: EmbeddingConfig | None = None,
     logistic_cfg: LogisticConfig | None = None,
     weight_step: float = 0.1,
     threshold_step: float = 0.01,
     fixed_weights: dict[str, float] | None = None,
+    fixed_threshold: float | None = None,
 ) -> tuple[EnsembleBundle, dict[str, Any]]:
     vectorizer_cfg = vectorizer_cfg or VectorizerConfig()
     ssl_cfg = ssl_cfg or SelfTrainingConfig()
@@ -560,10 +594,28 @@ def fit_full_pipeline(
         vectorizer_cfg=vectorizer_cfg,
         ssl_cfg=ssl_cfg,
         embedding_cfg=embedding_cfg,
+        teacher_mode=teacher_mode,
         teacher_cfg=teacher_cfg,
         logistic_cfg=logistic_cfg,
     )
-    if fixed_weights:
+    if fixed_weights and fixed_threshold is not None:
+        labels_arr = np.asarray(gold_labels, dtype=int)
+        blended = np.zeros(len(labels_arr), dtype=float)
+        total_weight = sum(float(fixed_weights.get(name, 0.0)) for name in component_probs)
+        if total_weight <= 0:
+            raise ValueError('fixed_weights must include at least one active component')
+        for name, probs in component_probs.items():
+            blended += probs * (float(fixed_weights.get(name, 0.0)) / total_weight)
+        metrics = metrics_at_threshold(blended, labels_arr, fixed_threshold)
+        best = WeightSearchResult(
+            weights={name: float(fixed_weights.get(name, 0.0)) for name in component_probs},
+            threshold=float(fixed_threshold),
+            f1=float(metrics['f1']),
+            accuracy=float(metrics['accuracy']),
+            precision=float(metrics['precision']),
+            recall=float(metrics['recall']),
+        )
+    elif fixed_weights:
         labels_arr = np.asarray(gold_labels, dtype=int)
         blended = np.zeros(len(labels_arr), dtype=float)
         total_weight = sum(float(fixed_weights.get(name, 0.0)) for name in component_probs)
@@ -583,10 +635,15 @@ def fit_full_pipeline(
     else:
         best = search_weights_and_threshold(component_probs, gold_labels, step=weight_step, threshold_step=threshold_step)
 
-    component_cv_metrics = {
-        name: metrics_at_threshold(probs, gold_labels, _score_thresholds(probs, np.asarray(gold_labels, dtype=int), threshold_step).threshold)
-        for name, probs in component_probs.items()
-    }
+    labels_arr = np.asarray(gold_labels, dtype=int)
+    evaluation_threshold = best.threshold if fixed_threshold is not None else None
+    component_cv_metrics = {}
+    for name, probs in component_probs.items():
+        if evaluation_threshold is None:
+            component_threshold = _score_thresholds(probs, labels_arr, threshold_step).threshold
+        else:
+            component_threshold = evaluation_threshold
+        component_cv_metrics[name] = metrics_at_threshold(probs, gold_labels, component_threshold)
 
     baseline = fit_tfidf_model(gold_texts, gold_labels, vectorizer_cfg, logistic_cfg=logistic_cfg)
 
@@ -596,9 +653,17 @@ def fit_full_pipeline(
         confidence_positive=ssl_cfg.positive_confidence,
         confidence_negative=ssl_cfg.negative_confidence,
     )
-    if ssl_cfg.enabled and ssl_cfg.rank_mode and unlabeled_texts and teacher_cfg is not None:
+    teacher_model, resolved_teacher_mode = _resolve_teacher_model(
+        gold_texts,
+        gold_labels,
+        vectorizer_cfg,
+        logistic_cfg,
+        teacher_mode,
+        teacher_cfg,
+    )
+    if ssl_cfg.enabled and ssl_cfg.rank_mode and unlabeled_texts and teacher_model is not None:
         pseudo_texts, pseudo_labels, pseudo_weights = _rank_based_pseudo_labels(
-            fit_embedding_model(gold_texts, gold_labels, teacher_cfg),
+            teacher_model,
             unlabeled_texts,
             top_k=ssl_cfg.rank_top_k,
         )
@@ -626,6 +691,7 @@ def fit_full_pipeline(
                 vectorizer_cfg,
                 ssl_cfg,
                 logistic_cfg=logistic_cfg,
+                teacher_mode=teacher_mode,
                 teacher_cfg=teacher_cfg,
             )
             ssl_summary = ssl_summary2
@@ -663,6 +729,7 @@ def fit_full_pipeline(
                 vectorizer_cfg,
                 ssl_cfg,
                 logistic_cfg=logistic_cfg,
+                teacher_mode=teacher_mode,
                 teacher_cfg=teacher_cfg,
             )
             ssl_summary = ssl_summary2
@@ -674,6 +741,7 @@ def fit_full_pipeline(
             vectorizer_cfg,
             ssl_cfg,
             logistic_cfg=logistic_cfg,
+            teacher_mode=teacher_mode,
             teacher_cfg=teacher_cfg,
         )
 
@@ -690,7 +758,8 @@ def fit_full_pipeline(
             'ssl_cfg': asdict(ssl_cfg),
             'logistic_cfg': asdict(logistic_cfg or LogisticConfig()),
             'embedding_cfg': asdict(embedding_cfg) if embedding_cfg is not None else None,
-            'teacher_cfg': asdict(teacher_cfg) if teacher_cfg is not None else None,
+            'teacher_cfg': asdict(teacher_cfg) if teacher_cfg is not None and resolved_teacher_mode == 'embedding' else None,
+            'teacher_mode': resolved_teacher_mode,
             'cv_metrics': {
                 'f1': best.f1,
                 'accuracy': best.accuracy,
@@ -717,7 +786,8 @@ def fit_full_pipeline(
         'vectorizer_cfg': asdict(vectorizer_cfg),
         'logistic_cfg': asdict(logistic_cfg or LogisticConfig()),
         'embedding_cfg': asdict(embedding_cfg) if embedding_cfg is not None else None,
-        'teacher_cfg': asdict(teacher_cfg) if teacher_cfg is not None else None,
+        'teacher_cfg': asdict(teacher_cfg) if teacher_cfg is not None and resolved_teacher_mode == 'embedding' else None,
+        'teacher_mode': resolved_teacher_mode,
     }
     return bundle, report
 

@@ -37,8 +37,10 @@ def build_parser():
     p.add_argument('--ssl-rank-mode', action='store_true', help='Use rank-based pseudo-labeling when embeddings are enabled')
     p.add_argument('--ssl-rank-top-k', type=int, default=20, help='Top-K for rank-based pseudo-labeling')
     p.add_argument('--ssl-max-pool', type=int, default=500, help='Max unlabeled pool for rank-based pseudo-labeling')
+    p.add_argument('--ssl-teacher-mode', choices=['tfidf', 'embedding'], default=None, help='Teacher used for rank-based SSL pseudo-labeling')
     p.add_argument('--ssl-teacher-embedding-model', default=None, help='Optional frozen embedding teacher for pseudo-label generation')
     p.add_argument('--fixed-plan-weights', action='store_true', help='Use the plan weights: baseline=.5 ssl=.3 embedding=.2')
+    p.add_argument('--fixed-ensemble-threshold', type=float, default=None, help='Use a fixed ensemble threshold instead of searching')
     return p
 
 
@@ -101,10 +103,12 @@ def main(argv=None):
         ssl_cfg=ssl_cfg,
         embedding_cfg=embedding_cfg,
         teacher_cfg=teacher_cfg,
+        teacher_mode=args.ssl_teacher_mode,
         logistic_cfg=logistic_cfg,
         weight_step=args.weight_step,
         threshold_step=args.threshold_step,
         fixed_weights=fixed_weights,
+        fixed_threshold=args.fixed_ensemble_threshold,
     )
 
     probs = predict_component_proba(bundle, list(texts), 'ensemble')

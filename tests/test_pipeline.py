@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import csv
 
+import numpy as np
 import src.predict as predict_module
 from src.config import LogisticConfig, SelfTrainingConfig, VectorizerConfig
 from src.data import read_labeled_dataset
+import src.model as model_module
 from src.model import fit_full_pipeline, metrics_at_threshold, predict_component_proba
 from src.predict import main as predict_main
 from src.text import has_strong_negation, normalize_for_vectorizer, truncate_words
@@ -102,3 +104,54 @@ def test_predict_applies_saved_vectorizer_normalization(tmp_path, monkeypatch):
     ])
 
     assert seen["texts"] == ["bp <NUM>"]
+
+
+def test_fit_full_pipeline_fixed_threshold_and_teacher_mode(monkeypatch):
+    gold_texts = ["alpha", "beta", "gamma", "delta"]
+    gold_labels = [1, 0, 1, 0]
+
+    monkeypatch.setattr(
+        model_module,
+        "cross_validated_component_probs",
+        lambda *args, **kwargs: {
+            "baseline": np.array([0.9, 0.1, 0.8, 0.2], dtype=float),
+            "ssl": np.array([0.85, 0.2, 0.75, 0.3], dtype=float),
+            "embedding": np.array([0.88, 0.15, 0.82, 0.25], dtype=float),
+        },
+    )
+
+    class FakeModel:
+        def __init__(self, name):
+            self.name = name
+            self.pseudo_rows = 0
+
+        def predict_proba(self, texts):
+            base = 0.6 if self.name != "baseline" else 0.4
+            return np.full(len(texts), base, dtype=float)
+
+    monkeypatch.setattr(model_module, "fit_tfidf_model", lambda *args, **kwargs: FakeModel("tfidf"))
+    monkeypatch.setattr(
+        model_module,
+        "fit_self_training_tfidf",
+        lambda *args, **kwargs: (FakeModel("ssl"), model_module.SelfTrainingSummary(pseudo_rows=2)),
+    )
+    monkeypatch.setattr(model_module, "fit_embedding_model", lambda *args, **kwargs: FakeModel("embedding"))
+
+    bundle, report = fit_full_pipeline(
+        gold_texts,
+        gold_labels,
+        unlabeled_texts=["epsilon"],
+        vectorizer_cfg=VectorizerConfig(max_features_word=100, max_features_char=100),
+        ssl_cfg=SelfTrainingConfig(enabled=True, rank_mode=True),
+        embedding_cfg=model_module.EmbeddingConfig(model_name="fake-model"),
+        teacher_mode="tfidf",
+        logistic_cfg=LogisticConfig(c=1.0),
+        fixed_weights={"baseline": 0.5, "ssl": 0.3, "embedding": 0.2},
+        fixed_threshold=0.43,
+    )
+
+    assert report["threshold"] == 0.43
+    assert report["teacher_mode"] == "tfidf"
+    assert bundle.threshold == 0.43
+    assert bundle.weights == {"baseline": 0.5, "ssl": 0.3, "embedding": 0.2}
+    assert bundle.embedding is not None
