@@ -33,7 +33,7 @@ if [ "$USE_PIP_TORCH" = "1" ]; then
     "torchaudio==2.6.0+${PIP_CUDA_TAG}"
   python -m pip install --user --upgrade numpy transformers
 else
-  module load PyTorch/2.6.0 Transformers/4.55.0
+  module load PyTorch/2.1.2-CUDA-12.1.1 Transformers/4.55.0
 fi
 
 python -u <<'PY'

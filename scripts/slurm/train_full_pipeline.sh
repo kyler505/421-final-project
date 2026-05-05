@@ -42,9 +42,9 @@ cd "$PROJECT_DIR"
 ln -sfn "$RUN_DIR" "$PROJECT_DIR/latest-run"
 
 module purge
-module load GCC/13.3.0 OpenMPI/5.0.3 scikit-learn/1.6.1
+module load GCC/12.3.0 OpenMPI/4.1.5 scikit-learn/1.6.1
 if [ -n "$SSL_TEACHER_MODEL" ] || [ "$NO_EMBEDDINGS" = "0" ]; then
-  module load PyTorch/2.6.0 Transformers/4.55.0
+  module load PyTorch/2.1.2-CUDA-12.1.1 Transformers/4.55.0
 fi
 
 PYTHON="${PYTHON:-python}"
